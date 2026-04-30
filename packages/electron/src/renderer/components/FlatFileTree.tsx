@@ -31,7 +31,6 @@ interface FlatFileTreeProps {
   onNewFolder?: (folderPath: string) => void;
   onRefreshFileTree?: () => void;
   onFolderContentsLoaded?: (folderPath: string, contents: RendererFileTreeItem[]) => void;
-  onViewHistory?: (filePath: string) => void;
   onViewWorkspaceHistory?: (folderPath: string) => void;
   onFolderSelect?: (folderPath: string | null) => void;
   extensionFileTypes?: ExtensionFileType[];
@@ -54,7 +53,6 @@ export function FlatFileTree({
   onNewFolder,
   onRefreshFileTree,
   onFolderContentsLoaded,
-  onViewHistory,
   onViewWorkspaceHistory,
   onFolderSelect,
   extensionFileTypes = [],
@@ -935,7 +933,6 @@ export function FlatFileTree({
           onDeleteMultiple={handleDeleteMultiple}
           onNewFile={onNewFile}
           onNewFolder={onNewFolder}
-          onViewHistory={onViewHistory}
           onViewWorkspaceHistory={onViewWorkspaceHistory}
           selectedPaths={selectedPaths}
           extensionFileTypes={extensionFileTypes}

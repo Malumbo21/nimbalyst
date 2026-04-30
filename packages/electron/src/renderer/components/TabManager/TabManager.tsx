@@ -20,7 +20,6 @@ interface TabManagerProps {
   // NOTE: tabs, activeTabId, onTabSelect, onTogglePin, onTabReorder removed - now comes from useTabs() context
   onTabClose: (tabId: string) => void;
   onNewTab: () => void;
-  onViewHistory?: (tabId: string) => void;
   hideTabBar?: boolean;
   isActive?: boolean; // Whether this TabManager's keyboard shortcuts should be active
   onToggleAIChat?: () => void; // Toggle AI Chat panel
@@ -31,7 +30,6 @@ interface TabManagerProps {
 export const TabManager: React.FC<TabManagerProps> = ({
   onTabClose,
   onNewTab,
-  onViewHistory,
   hideTabBar = false,
   isActive = true,
   onToggleAIChat,
@@ -54,7 +52,6 @@ export const TabManager: React.FC<TabManagerProps> = ({
           onNewTab={onNewTab}
           onTogglePin={togglePin}
           onTabReorder={reorderTabs}
-          onViewHistory={onViewHistory}
           isActive={isActive}
           onToggleAIChat={onToggleAIChat}
           isAIChatCollapsed={isAIChatCollapsed}

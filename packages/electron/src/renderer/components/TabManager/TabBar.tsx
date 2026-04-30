@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, memo } from 'react';
+import { useSetAtom } from 'jotai';
 import { Tab } from './TabManager';
 import {
   useTabDirty,
@@ -6,6 +7,7 @@ import {
   useTabHasUnacceptedChanges,
 } from '../../hooks/useTabState';
 import { CommonFileActions } from '../CommonFileActions';
+import { historyDialogFileAtom } from '../../store';
 
 // Separate component for dirty indicator - subscribes to its own tab's dirty state
 // This allows only this component to re-render when dirty state changes
@@ -187,7 +189,6 @@ interface TabBarProps {
   onNewTab: () => void;
   onTogglePin: (tabId: string) => void;
   onTabReorder: (fromIndex: number, toIndex: number) => void;
-  onViewHistory?: (tabId: string) => void;
   onReopenLastClosed?: () => void;
   hasClosedTabs?: boolean;
   onTabRename?: (tabId: string, newName: string) => void;
@@ -205,7 +206,6 @@ export const TabBar: React.FC<TabBarProps> = ({
   onNewTab,
   onTogglePin,
   onTabReorder,
-  onViewHistory,
   onReopenLastClosed,
   hasClosedTabs = false,
   onTabRename,
@@ -214,6 +214,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   onToggleAIChat,
   isAIChatCollapsed = false
 }) => {
+  const openHistoryDialog = useSetAtom(historyDialogFileAtom);
   const [contextMenuTab, setContextMenuTab] = useState<string | null>(null);
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
   const [adjustedContextMenuPosition, setAdjustedContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -350,11 +351,14 @@ export const TabBar: React.FC<TabBarProps> = ({
   }, [contextMenuTab, onTogglePin, closeContextMenu]);
 
   const handleViewHistory = useCallback(() => {
-    if (contextMenuTab && onViewHistory) {
-      onViewHistory(contextMenuTab);
+    if (contextMenuTab) {
+      const tab = tabs.find(t => t.id === contextMenuTab);
+      if (tab?.filePath) {
+        openHistoryDialog(tab.filePath);
+      }
     }
     closeContextMenu();
-  }, [contextMenuTab, onViewHistory, closeContextMenu]);
+  }, [contextMenuTab, tabs, openHistoryDialog, closeContextMenu]);
 
   // Get the file info for the context menu tab (used by CommonFileActions)
   const contextMenuTabData = contextMenuTab ? tabs.find(t => t.id === contextMenuTab) : null;
@@ -741,14 +745,10 @@ export const TabBar: React.FC<TabBarProps> = ({
           <div className="context-menu-item px-4 py-2 text-[13px] text-[var(--nim-text-muted)] cursor-pointer transition-colors duration-150 hover:bg-[var(--nim-bg-hover)]" onClick={handleTogglePin}>
             {tabs.find(t => t.id === contextMenuTab)?.isPinned ? 'Unpin' : 'Pin'} Tab
           </div>
-          {onViewHistory && (
-            <>
-              <div className="context-menu-separator h-px bg-[var(--nim-border)] my-1" />
-              <div className="context-menu-item px-4 py-2 text-[13px] text-[var(--nim-text-muted)] cursor-pointer transition-colors duration-150 hover:bg-[var(--nim-bg-hover)]" onClick={handleViewHistory}>
-                View History...
-              </div>
-            </>
-          )}
+          <div className="context-menu-separator h-px bg-[var(--nim-border)] my-1" />
+          <div className="context-menu-item px-4 py-2 text-[13px] text-[var(--nim-text-muted)] cursor-pointer transition-colors duration-150 hover:bg-[var(--nim-bg-hover)]" onClick={handleViewHistory}>
+            View History...
+          </div>
           {/* Common file actions (Open in Default App, External Editor, Finder, Copy Path, Share) */}
           {contextMenuTabData && (
             <>

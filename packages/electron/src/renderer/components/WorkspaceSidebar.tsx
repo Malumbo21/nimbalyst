@@ -31,7 +31,6 @@ interface WorkspaceSidebarProps {
   onFileSelect: (filePath: string) => void;
   onCloseWorkspace: () => void;
   onOpenQuickSearch?: () => void;
-  onViewHistory?: (filePath: string) => void;
   onViewWorkspaceHistory?: (folderPath: string) => void;
   onNewPlan?: () => void;
   onOpenPlansTable?: () => void;
@@ -127,7 +126,6 @@ export function WorkspaceSidebar({
   onFileSelect,
   onCloseWorkspace,
   onOpenQuickSearch,
-  onViewHistory,
   onViewWorkspaceHistory,
   onNewPlan,
   onOpenPlansTable,
@@ -1177,7 +1175,6 @@ export function WorkspaceSidebar({
                 onNewFolder={handleNewFolderInFolder}
                 onRefreshFileTree={handleRefreshFileTree}
                 onFolderContentsLoaded={handleFolderContentsLoaded}
-                onViewHistory={onViewHistory}
                 onViewWorkspaceHistory={onViewWorkspaceHistory}
                 onFolderSelect={handleSelectedFolderChange}
                 extensionFileTypes={extensionFileTypes}

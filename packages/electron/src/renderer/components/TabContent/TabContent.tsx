@@ -41,7 +41,6 @@ interface TabContentProps {
   onSaveTabByIdReady?: (saveTabById: (tabId: string) => Promise<void>) => void;
 
   // Document action callbacks
-  onViewHistory?: () => void;
   onRenameDocument?: () => void;
   onSwitchToAgentMode?: (planDocumentPath?: string, sessionId?: string) => void;
   onOpenSessionInChat?: (sessionId: string) => void;
@@ -66,7 +65,6 @@ const TabContentComponent: React.FC<TabContentProps> = ({
   onGetContentReady,
   onSaveComplete,
   onSaveTabByIdReady,
-  onViewHistory,
   onRenameDocument,
   onSwitchToAgentMode,
   onOpenSessionInChat,
@@ -97,7 +95,6 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     onManualSaveReady,
     onGetContentReady,
     onSaveComplete,
-    onViewHistory,
     onRenameDocument,
     onSwitchToAgentMode,
     onOpenSessionInChat,
@@ -109,7 +106,6 @@ const TabContentComponent: React.FC<TabContentProps> = ({
     onManualSaveReady,
     onGetContentReady,
     onSaveComplete,
-    onViewHistory,
     onRenameDocument,
     onSwitchToAgentMode,
     onOpenSessionInChat,
@@ -319,7 +315,6 @@ const TabContentComponent: React.FC<TabContentProps> = ({
               onSaveComplete={propsRef.current.onSaveComplete}
               onManualSaveReady={handleManualSaveReady}
               onGetContentReady={handleGetContentReady}
-              onViewHistory={propsRef.current.onViewHistory}
               onRenameDocument={propsRef.current.onRenameDocument}
               onSwitchToAgentMode={propsRef.current.onSwitchToAgentMode}
               onOpenSessionInChat={propsRef.current.onOpenSessionInChat}

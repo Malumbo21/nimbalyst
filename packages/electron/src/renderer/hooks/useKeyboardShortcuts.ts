@@ -7,6 +7,7 @@ import {
   closeTerminalPanelAtom,
 } from '../store/atoms/terminals';
 import { setViewModeAtom, viewModeAtom } from '../store/atoms/agentMode';
+import { historyDialogFileAtom } from '../store';
 import { store } from '@nimbalyst/runtime/store';
 import posthog from 'posthog-js';
 
@@ -106,12 +107,16 @@ export function useKeyboardShortcuts({
         }
       }
 
-      // Cmd+Y for history dialog (Files mode only)
+      // Cmd+Y for history dialog (works in any mode that has an active file)
       if (isAppModifier && e.key === 'y') {
         e.preventDefault();
-        // Only open history dialog when in files mode
-        if (workspaceMode && activeModeStateRef.current === 'files' && editorModeRef.current) {
-          editorModeRef.current.openHistoryDialog();
+        if (workspaceMode) {
+          // __currentDocumentPath is maintained by both EditorMode (FilesMode) and
+          // WorkstreamEditorTabs (AgentMode), so it tracks whichever file is active.
+          const activeFilePath = (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath;
+          if (activeFilePath) {
+            store.set(historyDialogFileAtom, activeFilePath);
+          }
         }
       }
 

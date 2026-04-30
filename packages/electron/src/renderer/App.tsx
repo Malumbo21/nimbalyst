@@ -33,6 +33,7 @@ import { initializeDialogs, DIALOG_IDS } from './dialogs';
 import type { ProjectSelectionData, ErrorDialogData, ExtensionProjectIntroData } from './dialogs';
 import { NavigationDialogKeyboardHandler } from './components/NavigationDialogKeyboardHandler';
 import { ConfirmDialog } from './components/ConfirmDialog/ConfirmDialog';
+import { GlobalHistoryDialog } from './components/HistoryDialog';
 // NOTE: DiscordInvitation, KeyboardShortcutsDialog, ApiKeyDialog now managed by DialogProvider
 // NOTE: WindowsClaudeCodeWarning now managed by DialogProvider
 // NOTE: ErrorDialog now managed by DialogProvider
@@ -87,6 +88,7 @@ import {
   // Session list refresh (used in test helpers)
   refreshSessionListAtom,
   sessionRegistryAtom,
+  historyDialogFileAtom,
 } from './store';
 import { initAiCommandListeners } from './store/listeners/aiCommandListeners';
 import { initAppCommandListeners } from './store/listeners/appCommandListeners';
@@ -1759,7 +1761,21 @@ export default function App() {
     }
   }, [reopenLastClosedTabVersion]);
 
-  // NOTE: view-history (Cmd+Y) is handled by the keyboard handler above, not IPC
+  // view-history IPC fires when the user picks Edit > View Local History (Cmd+Y).
+  // On macOS, the menu accelerator preempts the renderer keydown event, so the
+  // IPC path is the canonical one. Open the global history dialog for whichever
+  // file is currently active (FilesMode or AgentMode -- both modes maintain
+  // window.__currentDocumentPath as the active file).
+  const setHistoryDialogFile = useSetAtom(historyDialogFileAtom);
+  useEffect(() => {
+    if (!window.electronAPI?.onViewHistory) return undefined;
+    return window.electronAPI.onViewHistory(() => {
+      const activeFilePath = (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath;
+      if (activeFilePath) {
+        setHistoryDialogFile(activeFilePath);
+      }
+    });
+  }, [setHistoryDialogFile]);
 
   // Intercept external link clicks and open in default browser
   useEffect(() => {
@@ -2106,6 +2122,7 @@ export default function App() {
       {/* are now managed by DialogProvider and rendered automatically */}
 
       {/* KeyboardShortcutsDialog, ApiKeyDialog, ProjectSelectionDialog, ErrorDialog are now managed by DialogProvider */}
+      <GlobalHistoryDialog theme={theme === 'auto' ? 'dark' : theme} workspacePath={workspacePath || undefined} />
       <ConfirmDialog
         isOpen={confirmDialog.isOpen}
         title={confirmDialog.options.title}

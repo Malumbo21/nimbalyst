@@ -3,7 +3,7 @@ import { useSetAtom, useAtomValue } from 'jotai';
 import type { ConfigTheme } from '@nimbalyst/runtime';
 import { useTabsActions, type TabData } from '../../contexts/TabsContext';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
-import { pushNavigationEntryAtom, isRestoringNavigationAtom } from '../../store';
+import { pushNavigationEntryAtom, isRestoringNavigationAtom, historyDialogFileAtom } from '../../store';
 import { newMockupRequestAtom, toggleAIChatPanelRequestAtom } from '../../store/atoms/appCommands';
 import { useTabNavigation } from '../../hooks/useTabNavigation';
 import { handleWorkspaceFileSelect as handleWorkspaceFileSelectUtil } from '../../utils/workspaceFileOperations';
@@ -22,7 +22,6 @@ import { ChatSidebar, type ChatSidebarRef } from '../ChatSidebar';
 import { NewFileDialog } from '../NewFileDialog';
 import type { NewFileType, ExtensionFileType } from '../NewFileMenu';
 import { contributionToExtensionFileType } from '../NewFileMenu';
-import { HistoryDialog } from '../HistoryDialog';
 import { WorkspaceHistoryDialog } from '../WorkspaceHistoryDialog';
 import { getTextSelection } from '../UnifiedAI/TextSelectionIndicator';
 import {
@@ -89,7 +88,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
   // Dialog states
   const [isNewFileDialogOpen, setIsNewFileDialogOpen] = useState(false);
   const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
-  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false);
   const [isWorkspaceHistoryDialogOpen, setIsWorkspaceHistoryDialogOpen] = useState(false);
   const [workspaceHistoryPath, setWorkspaceHistoryPath] = useState<string | null>(null);
 
@@ -596,7 +594,11 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     handleOpen,
     handleSaveAs,
     selectFile: handleWorkspaceFileSelect,
-    openHistoryDialog: () => setIsHistoryDialogOpen(true),
+    openHistoryDialog: () => {
+      if (currentFilePath) {
+        store.set(historyDialogFileAtom, currentFilePath);
+      }
+    },
     toggleSidebarCollapsed,
     tabs: {
       addTab: (filePath: string, content?: string) => {
@@ -886,32 +888,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
     }
   }, [workspacePath, newFileDirectory, handleWorkspaceFileSelect, extensionFileTypes]);
 
-  // Handle restoring content from history
-  const handleRestoreFromHistory = useCallback(async (content: string) => {
-    if (!currentFilePath) {
-      return;
-    }
-
-    try {
-      // Write restored content to disk
-      await window.electronAPI.saveFile(content, currentFilePath);
-
-      // Update tab state to reflect saved state
-      const store = tabsActions.getSnapshot();
-      if (store.activeTabId) {
-        tabsActions.updateTab(store.activeTabId, {
-          isDirty: false,
-          lastSaved: new Date()
-        });
-      }
-    } catch (error) {
-      console.error('[EditorMode] Failed to restore content from history:', error);
-    }
-
-    // Close the history dialog
-    setIsHistoryDialogOpen(false);
-  }, [currentFilePath, tabsActions]);
-
   return (
     <>
       {/* Main content area */}
@@ -928,9 +904,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
                 onFileSelect={handleWorkspaceFileSelect}
                 onCloseWorkspace={onCloseWorkspace || (() => {})}
                 onOpenQuickSearch={onOpenQuickSearch}
-                onViewHistory={(filePath) => {
-                  setIsHistoryDialogOpen(true);
-                }}
                 onViewWorkspaceHistory={(folderPath) => {
                   setWorkspaceHistoryPath(folderPath);
                   setIsWorkspaceHistoryDialogOpen(true);
@@ -963,12 +936,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
             <TabManager
               onTabClose={handleTabClose}
               onNewTab={() => setIsNewFileDialogOpen(true)}
-              onViewHistory={(tabId) => {
-                const tab = tabsActions.getTabState(tabId);
-                if (tab && tab.filePath) {
-                  setIsHistoryDialogOpen(true);
-                }
-              }}
               hideTabBar={false}
               isActive={isActive}
               onToggleAIChat={() => setIsAIChatCollapsed(prev => !prev)}
@@ -1002,9 +969,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
                   if (onGetContentReady) {
                     onGetContentReady(getContentFn);
                   }
-                }}
-                onViewHistory={() => {
-                  setIsHistoryDialogOpen(true);
                 }}
                 onRenameDocument={() => {
                   console.log('Rename document requested');
@@ -1053,18 +1017,6 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
           onCreateFile={handleNewFile}
           extensionFileTypes={extensionFileTypes}
           onDirectoryChange={setNewFileDirectory}
-        />
-      )}
-
-      {isHistoryDialogOpen && currentFilePath && (
-        <HistoryDialog
-          isOpen={isHistoryDialogOpen}
-          onClose={() => setIsHistoryDialogOpen(false)}
-          filePath={currentFilePath}
-          onRestore={handleRestoreFromHistory}
-          theme={theme === 'auto' ? 'dark' : theme}
-          workspacePath={workspacePath}
-          onOpenSessionInChat={handleOpenSessionInChat}
         />
       )}
 

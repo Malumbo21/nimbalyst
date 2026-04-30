@@ -45,6 +45,7 @@ import type { EditorHost, DiffConfig } from '@nimbalyst/runtime';
 import { createExtensionStorage } from '@nimbalyst/runtime';
 import { setEditorContext, clearEditorContext } from '../../stores/editorContextStore';
 import { store, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
+import { historyDialogFileAtom } from '../../store';
 import { UnifiedEditorHeaderBar } from './UnifiedEditorHeaderBar';
 import { usePersonalDocSync } from '../../hooks/usePersonalDocSync';
 import { useDocumentModel } from '../../services/document-model/useDocumentModel';
@@ -83,7 +84,6 @@ interface TabEditorProps {
   onGetContentReady?: (getContentFunction: () => string) => void;
 
   // Document action callbacks
-  onViewHistory?: () => void;
   onRenameDocument?: () => void;
   onSwitchToAgentMode?: (planDocumentPath?: string, sessionId?: string) => void;
   onOpenSessionInChat?: (sessionId: string) => void;
@@ -105,7 +105,6 @@ export const TabEditor: React.FC<TabEditorProps> = ({
                                                       onSaveComplete,
                                                       onManualSaveReady,
                                                       onGetContentReady,
-                                                      onViewHistory,
                                                       onRenameDocument,
                                                       onSwitchToAgentMode,
                                                       onOpenSessionInChat,
@@ -299,7 +298,6 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   const sourceModeRef = useRef(sourceMode);
   // Whether current editor supports source mode toggle (markdown or custom editors that declare it)
   const supportsSourceModeRef = useRef(isMarkdown || customEditorSupportsSourceMode);
-  const onViewHistoryRef = useRef(onViewHistory);
 
   // CRITICAL: Update themeRef SYNCHRONOUSLY during render, not in an effect.
   // Effects run AFTER render, so custom editors would get the stale value if we used an effect.
@@ -353,7 +351,6 @@ export const TabEditor: React.FC<TabEditorProps> = ({
   useEffect(() => { isActiveRef.current = isActive; }, [isActive]);
   useEffect(() => { sourceModeRef.current = sourceMode; }, [sourceMode]);
   useEffect(() => { supportsSourceModeRef.current = isMarkdown || customEditorSupportsSourceMode; }, [isMarkdown, customEditorSupportsSourceMode]);
-  useEffect(() => { onViewHistoryRef.current = onViewHistory; }, [onViewHistory]);
 
   // Clear Lexical editor selection when tab becomes inactive
   // This ensures no stale visual selection when switching back to the tab
@@ -1994,7 +1991,7 @@ export const TabEditor: React.FC<TabEditorProps> = ({
 
       // Open history dialog
       openHistory: () => {
-        onViewHistoryRef.current?.();
+        store.set(historyDialogFileAtom, filePath);
       },
 
       // Subscribe to diff requests (optional - for editors that support diff mode)
@@ -2224,7 +2221,6 @@ export const TabEditor: React.FC<TabEditorProps> = ({
           isCustomEditor={isCustom}
           extensionId={customEditorRegistration?.extensionId}
           lexicalEditor={isMarkdown && !sourceMode ? editorRef.current : undefined}
-          onViewHistory={onViewHistory}
           onToggleSourceMode={() => editorHost.toggleSourceMode?.()}
           supportsSourceMode={isMarkdown || customEditorSupportsSourceMode}
           isSourceModeActive={sourceMode}

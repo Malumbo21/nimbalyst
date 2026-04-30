@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import type { NewFileType, ExtensionFileType } from './NewFileMenu';
 import { CommonFileActions } from './CommonFileActions';
 import { useFloatingMenu, FloatingPortal, virtualElement } from '../hooks/useFloatingMenu';
+import { historyDialogFileAtom } from '../store';
 
 interface FileContextMenuProps {
   x: number;
@@ -16,7 +18,6 @@ interface FileContextMenuProps {
   onDeleteMultiple?: (filePaths: string[]) => void;
   onNewFile?: (folderPath: string, fileType: NewFileType) => void;
   onNewFolder?: (folderPath: string) => void;
-  onViewHistory?: (filePath: string) => void;
   onViewWorkspaceHistory?: (folderPath: string) => void;
   selectedPaths?: Set<string>;
   /** Extension-contributed file types */
@@ -35,11 +36,11 @@ export function FileContextMenu({
   onDeleteMultiple,
   onNewFile,
   onNewFolder,
-  onViewHistory,
   onViewWorkspaceHistory,
   selectedPaths,
   extensionFileTypes = []
 }: FileContextMenuProps) {
+  const openHistoryDialog = useSetAtom(historyDialogFileAtom);
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(fileName);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -243,8 +244,8 @@ export function FileContextMenu({
           </>
         )}
 
-        {fileType === 'file' && onViewHistory && (
-          <div className={menuItemClasses} onClick={() => { onViewHistory(filePath); onClose(); }}>
+        {fileType === 'file' && (
+          <div className={menuItemClasses} onClick={() => { openHistoryDialog(filePath); onClose(); }}>
             <MaterialSymbol icon="history" size={18} />
             <span>View History...</span>
           </div>

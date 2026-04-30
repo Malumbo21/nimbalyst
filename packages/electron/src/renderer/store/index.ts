@@ -207,6 +207,9 @@ export {
   type FlatTreeNode,
 } from './atoms/fileTree';
 
+// History dialog atom (global file-history dialog state)
+export { historyDialogFileAtom } from './atoms/historyDialog';
+
 // Tracker atoms (Electron-specific)
 export {
   trackerCountsAtom,

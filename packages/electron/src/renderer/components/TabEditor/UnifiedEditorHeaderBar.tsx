@@ -27,7 +27,7 @@ import {
 } from '@nimbalyst/runtime';
 import { $generateHtmlFromNodes } from '@lexical/html';
 import { copyToClipboard, ProviderIcon } from '@nimbalyst/runtime';
-import { revealFolderAtom, revealFileAtom, openFileRequestAtom, setWindowModeAtom } from '../../store';
+import { revealFolderAtom, revealFileAtom, openFileRequestAtom, setWindowModeAtom, historyDialogFileAtom } from '../../store';
 import { useFloatingMenu, FloatingPortal } from '../../hooks/useFloatingMenu';
 import { getDocumentService } from '../../services/RendererDocumentService';
 import { isWorktreePath } from '../../../shared/pathUtils';
@@ -115,7 +115,6 @@ interface UnifiedEditorHeaderBarProps {
   lexicalEditor?: EditorLike;
 
   // Action callbacks
-  onViewHistory?: () => void;
   onToggleSourceMode?: () => void;
   supportsSourceMode?: boolean;
   isSourceModeActive?: boolean;
@@ -147,7 +146,6 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   isCustomEditor = false,
   extensionId,
   lexicalEditor,
-  onViewHistory,
   onToggleSourceMode,
   supportsSourceMode = false,
   isSourceModeActive = false,
@@ -165,6 +163,7 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
   const revealFile = useSetAtom(revealFileAtom);
   const setOpenFileRequest = useSetAtom(openFileRequestAtom);
   const setWindowMode = useSetAtom(setWindowModeAtom);
+  const openHistoryDialog = useSetAtom(historyDialogFileAtom);
 
   // Dropdown states
   const [showAISessions, setShowAISessions] = useState(false);
@@ -821,21 +820,19 @@ export const UnifiedEditorHeaderBar: React.FC<UnifiedEditorHeaderBarProps> = ({
               )}
 
               {/* View History */}
-              {onViewHistory && (
-                <button
-                  className="dropdown-item w-full py-2 px-3 border-none bg-transparent text-[13px] text-left cursor-pointer flex items-center gap-2.5 transition-colors duration-150 text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
-                  onClick={() => {
-                    onViewHistory();
-                    setShowActionsMenu(false);
-                  }}
-                >
-                  <svg className="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10"/>
-                    <polyline points="12 6 12 12 16 14"/>
-                  </svg>
-                  View History
-                </button>
-              )}
+              <button
+                className="dropdown-item w-full py-2 px-3 border-none bg-transparent text-[13px] text-left cursor-pointer flex items-center gap-2.5 transition-colors duration-150 text-[var(--nim-text)] hover:bg-[var(--nim-bg-hover)]"
+                onClick={() => {
+                  openHistoryDialog(filePath);
+                  setShowActionsMenu(false);
+                }}
+              >
+                <svg className="w-4 h-4 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                View History
+              </button>
 
               {/* Markdown-specific actions */}
               {isMarkdown && (
