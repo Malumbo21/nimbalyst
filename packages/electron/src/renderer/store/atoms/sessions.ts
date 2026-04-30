@@ -20,6 +20,7 @@ import { store } from '@nimbalyst/runtime/store';
 import { ModelIdentifier, type ChatAttachment, type TranscriptViewMessage } from '@nimbalyst/runtime/ai/server/types';
 import type { SessionMeta } from '@nimbalyst/runtime';
 import { workstreamStateAtom, setWorkstreamActiveChildAtom } from './workstreamState';
+import { aiInputHistoryAtom } from './aiInputUndo';
 
 // SessionMeta is imported from @nimbalyst/runtime (canonical type).
 // Re-export for consumers that import from the store.
@@ -1706,6 +1707,7 @@ export const cleanupSessionAtom = atom(null, (get, set, sessionId: string) => {
   sessionDraftInputAtom.remove(sessionId);
   sessionDraftAttachmentsAtom.remove(sessionId);
   sessionLastSubmitAtAtom.remove(sessionId);
+  aiInputHistoryAtom.remove(sessionId);
   // Hierarchical session atoms
   sessionChildrenAtom.remove(sessionId);
   sessionActiveChildAtom.remove(sessionId);

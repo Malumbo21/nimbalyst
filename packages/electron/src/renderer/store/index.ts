@@ -156,6 +156,14 @@ export {
   reparentSessionAtom,
 } from './atoms/sessions';
 
+// AIInput undo/redo history (per-session)
+export {
+  aiInputHistoryAtom,
+  clearAIInputHistoryAtom,
+  type AIInputSnapshot,
+  type AIInputHistory,
+} from './atoms/aiInputUndo';
+
 // Session share state
 export {
   sessionSharesMapAtom,

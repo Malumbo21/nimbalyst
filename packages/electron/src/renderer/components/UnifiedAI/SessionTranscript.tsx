@@ -70,6 +70,7 @@ import {
 } from '../../store';
 import { streamCompletionSignalAtom } from '../../store/atoms/sessionTranscript';
 import { convertToWorkstreamAtom, sessionPromptAdditionsAtom, sessionLastSubmitAtAtom, sessionDraftLocalModifiedAtAtom, nextOptimisticId } from '../../store/atoms/sessions';
+import { clearAIInputHistoryAtom } from '../../store/atoms/aiInputUndo';
 import { scrollToTeammateAtom, scrollToMessageAtom, requestOpenSessionAtom } from '../../store/atoms/agentMode';
 import { usePostHog } from 'posthog-js/react';
 import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom } from '../../store/atoms/appSettings';
@@ -343,6 +344,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const [draftAttachments, setDraftAttachments] = useAtom(sessionDraftAttachmentsAtom(sessionId));
   const setLastSubmitAt = useSetAtom(sessionLastSubmitAtAtom(sessionId));
   const setDraftLocalModifiedAt = useSetAtom(sessionDraftLocalModifiedAtAtom(sessionId));
+  const clearAIInputHistory = useSetAtom(clearAIInputHistoryAtom);
 
   // Wrap setDraftInput to track local modification time for sync echo rejection
   const setDraftInput = useCallback((value: string | ((prev: string) => string)) => {
@@ -710,12 +712,13 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       setLastSubmitAt(Date.now());
       setDraftInput('');
       setDraftAttachments([]);
+      clearAIInputHistory(sessionId);
     } catch (error) {
       console.error('[SessionTranscript] Failed to queue prompt:', error);
     } finally {
       setIsQueueing(false);
     }
-  }, [sessionId, getEffectiveDocumentContext, draftAttachments, setDraftInput, setDraftAttachments, setLastSubmitAt, isQueueing, queuedPrompts]);
+  }, [sessionId, getEffectiveDocumentContext, draftAttachments, setDraftInput, setDraftAttachments, setLastSubmitAt, isQueueing, queuedPrompts, clearAIInputHistory]);
 
   const handleSend = useCallback(async () => {
     if (!draftInput.trim() || !sessionData) return;
@@ -761,6 +764,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       if (!message) {
         setDraftInput('');
         setDraftAttachments([]);
+        clearAIInputHistory(sessionId);
         return;
       }
     }
@@ -787,6 +791,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       // Clear the draft input immediately
       setDraftInput('');
       setDraftAttachments([]);
+      clearAIInputHistory(sessionId);
 
       if (mode === 'chat') {
         // Files mode: Create a new standalone session (same as +new button)
@@ -805,6 +810,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     setLastSubmitAt(Date.now());
     setDraftInput('');
     setDraftAttachments([]);
+    clearAIInputHistory(sessionId);
     resetHistory(sessionId); // Reset prompt history navigation
     // Optimistically set processing state - will be confirmed by session:started event
     setIsProcessing(true);
@@ -854,7 +860,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       });
       setIsProcessing(false);
     }
-  }, [sessionId, sessionData, draftInput, draftAttachments, isLoading, getEffectiveDocumentContext, aiMode, workspacePath, setDraftInput, setDraftAttachments, setLastSubmitAt, resetHistory, updateSessionStore, handleQueue, setIsProcessing, messages, mode, onClearSession, onClearAgentSession, sessionRegistry]);
+  }, [sessionId, sessionData, draftInput, draftAttachments, isLoading, getEffectiveDocumentContext, aiMode, workspacePath, setDraftInput, setDraftAttachments, setLastSubmitAt, resetHistory, updateSessionStore, handleQueue, setIsProcessing, messages, mode, onClearSession, onClearAgentSession, sessionRegistry, clearAIInputHistory]);
 
   const handleCancel = useCallback(async () => {
     try {

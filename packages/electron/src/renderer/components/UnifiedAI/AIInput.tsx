@@ -31,6 +31,8 @@ import {
   searchSessionMentionAtom,
   sessionRegistryAtom,
 } from '../../store';
+import { useAIInputUndo } from '../../hooks/useAIInputUndo';
+import type { AIInputSnapshot } from '../../store/atoms/aiInputUndo';
 
 export interface AIInputRef {
   focus: () => void;
@@ -172,6 +174,69 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     // Voice mode state - derived from centralized atom
     const voiceActiveSessionId = useAtomValue(voiceActiveSessionIdAtom);
     const isVoiceActive = voiceActiveSessionId === sessionId;
+
+    // Undo/redo stack for the input. Snapshots include text, attachments, and
+    // cursor; boundary events (paste, drop, typeahead, attachment add/remove,
+    // history navigation) always create a new entry, while typing coalesces.
+    const { pushSnapshot, undo, redo, clear: clearUndo, getUndoCount } = useAIInputUndo(sessionId);
+
+    // Track the undoCount captured at the start of each in-flight attachment
+    // processing IPC. If undo() has advanced the count by the time the IPC
+    // resolves, the user undid past the paste -- drop the result instead of
+    // silently re-adding the attachment.
+    const pasteUndoCountRef = useRef<Map<string, number>>(new Map());
+
+    // Skip undo pushes during IME composition; commit a single snapshot on
+    // compositionend so multi-keystroke kanji etc. count as one undo unit.
+    const isComposingRef = useRef(false);
+    const preCompositionSnapshotRef = useRef<AIInputSnapshot | null>(null);
+
+    // Build the snapshot we'd want to undo *back to* if the next mutation
+    // happened right now. Pushed BEFORE applying any change.
+    const captureSnapshot = useCallback((): AIInputSnapshot => {
+      const ta = textareaRef.current;
+      return {
+        value,
+        attachments,
+        cursorStart: ta?.selectionStart ?? value.length,
+        cursorEnd: ta?.selectionEnd ?? value.length,
+      };
+    }, [value, attachments]);
+
+    // Apply a restored snapshot to the live draft atoms and the textarea
+    // cursor. Used by both undo and redo.
+    const applySnapshot = useCallback((snap: AIInputSnapshot) => {
+      onChange(snap.value);
+      // Reconcile attachments to the snapshot. Reference equality is enough
+      // because both add and remove paths allocate fresh arrays upstream.
+      if (snap.attachments !== attachments) {
+        // Compute add/remove diff so we drive the existing prop callbacks.
+        const currentIds = new Set(attachments.map(a => a.id));
+        const targetIds = new Set(snap.attachments.map(a => a.id));
+        for (const a of attachments) {
+          if (!targetIds.has(a.id) && onAttachmentRemove) {
+            onAttachmentRemove(a.id);
+          }
+        }
+        for (const a of snap.attachments) {
+          if (!currentIds.has(a.id) && onAttachmentAdd) {
+            onAttachmentAdd(a);
+          }
+        }
+      }
+      // Restore cursor on next paint after onChange propagates.
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        try {
+          ta.setSelectionRange(snap.cursorStart, snap.cursorEnd);
+        } catch {
+          // setSelectionRange can throw if value hasn't been applied yet --
+          // best-effort, nothing actionable.
+        }
+      });
+    }, [onChange, attachments, onAttachmentAdd, onAttachmentRemove]);
 
     // File mention state via Jotai atoms
     // Subscribes directly to atoms instead of receiving props (no prop drilling)
@@ -692,6 +757,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       // Suppress typeahead re-trigger from the value change caused by this selection
       justSelectedRef.current = true;
 
+      pushSnapshot(captureSnapshot(), { boundary: true });
       onChange(newValue);
 
       setTimeout(() => {
@@ -704,7 +770,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       setTypeaheadMatch(null);
       setSelectedIndex(null);
       setSelectedOption(null);
-    }, [typeaheadMatch, value, onChange]);
+    }, [typeaheadMatch, value, onChange, pushSnapshot, captureSnapshot]);
 
     const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
       const currentOptions = typeaheadMatch?.trigger === '@@' ? sessionMentionOptions
@@ -747,6 +813,26 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           setSelectedOption(null);
           return;
         }
+      }
+
+      // Handle undo/redo (Cmd+Z, Cmd+Shift+Z, Ctrl+Y on Windows). Runs after
+      // typeahead navigation so Tab/Enter inside the typeahead still wins.
+      // Skip while IME composition is active so we don't interrupt kanji input.
+      const isModUndo = (e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey && !e.nativeEvent.isComposing;
+      const isModRedo =
+        ((e.metaKey || e.ctrlKey) && e.key === 'z' && e.shiftKey && !e.nativeEvent.isComposing) ||
+        ((e.metaKey || e.ctrlKey) && e.key === 'y' && !e.nativeEvent.isComposing);
+      if (isModUndo) {
+        e.preventDefault();
+        const restored = undo(captureSnapshot());
+        if (restored) applySnapshot(restored);
+        return;
+      }
+      if (isModRedo) {
+        e.preventDefault();
+        const restored = redo(captureSnapshot());
+        if (restored) applySnapshot(restored);
+        return;
       }
 
       // Handle Shift+Tab to toggle plan mode (only for Claude Code provider)
@@ -808,6 +894,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           if (provider === 'claude-code' && (before + text).trimStart().startsWith('#') && before.trim() === '') {
             pastedHashContentRef.current = true;
           }
+          pushSnapshot(captureSnapshot(), { boundary: true });
           onChange(before + text + after);
           setTimeout(() => {
             if (textareaRef.current) {
@@ -838,6 +925,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
         if (e.key === 'ArrowUp' && isAtStart) {
           e.preventDefault();
+          pushSnapshot(captureSnapshot(), { boundary: true });
           onNavigateHistory('up');
           setTimeout(() => {
             textarea.setSelectionRange(0, 0);
@@ -847,6 +935,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
         if (e.key === 'ArrowDown' && isAtEnd) {
           e.preventDefault();
+          pushSnapshot(captureSnapshot(), { boundary: true });
           onNavigateHistory('down');
           return;
         }
@@ -882,6 +971,12 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       // Generate a temporary ID for tracking processing state
       const processingId = `processing-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
+      // Capture undoCount at the START of the IPC. If undo() advances the
+      // counter while the attachment:save IPC is in flight, the user undid
+      // past this paste/drop -- we drop the result on resolve.
+      const undoCountAtStart = getUndoCount();
+      pasteUndoCountRef.current.set(processingId, undoCountAtStart);
+
       try {
         const validation = await window.electronAPI.invoke('attachment:validate', {
           fileSize: file.size,
@@ -890,6 +985,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         });
 
         if (!validation.valid) {
+          pasteUndoCountRef.current.delete(processingId);
           console.error('[AIInput] File validation failed:', validation.error);
           alert(validation.error || 'Invalid file');
           return;
@@ -911,6 +1007,15 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         // Remove from processing state
         setProcessingAttachments(prev => prev.filter(p => p.id !== processingId));
 
+        // If the user undid past this paste/drop while the IPC was running,
+        // drop the result -- they don't want this attachment back.
+        const stillRelevant = pasteUndoCountRef.current.get(processingId) === undoCountAtStart
+          && getUndoCount() === undoCountAtStart;
+        pasteUndoCountRef.current.delete(processingId);
+        if (!stillRelevant) {
+          return;
+        }
+
         if (result.success && result.attachment) {
           onAttachmentAdd(result.attachment);
           const reference = `@${file.name} `;
@@ -922,10 +1027,11 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       } catch (error) {
         // Remove from processing state on error
         setProcessingAttachments(prev => prev.filter(p => p.id !== processingId));
+        pasteUndoCountRef.current.delete(processingId);
         console.error('[AIInput] Error handling file attachment:', error);
         alert('Failed to attach file');
       }
-    }, [onAttachmentAdd, sessionId, value, onChange]);
+    }, [onAttachmentAdd, sessionId, value, onChange, getUndoCount]);
 
     // Drag and drop handlers
     const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -965,6 +1071,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           const after = value.substring(cursorPos);
           const needsSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
           const newValue = before + (needsSpaceBefore ? ' ' : '') + mention + ' ' + after;
+          pushSnapshot(captureSnapshot(), { boundary: true });
           onChange(newValue);
 
           const newCursorPos = cursorPos + (needsSpaceBefore ? 1 : 0) + mention.length + 1;
@@ -998,6 +1105,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         // Add space before if needed (not at start and no trailing space)
         const needsSpaceBefore = before.length > 0 && !before.endsWith(' ') && !before.endsWith('\n');
         const newValue = before + (needsSpaceBefore ? ' ' : '') + mention + ' ' + after;
+        pushSnapshot(captureSnapshot(), { boundary: true });
         onChange(newValue);
         // Focus textarea and set cursor after the inserted mention
         const newCursorPos = cursorPos + (needsSpaceBefore ? 1 : 0) + mention.length + 1;
@@ -1010,13 +1118,18 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         return;
       }
 
-      // Handle OS file drops as attachments
+      // Handle OS file drops as attachments. Push one boundary snapshot for
+      // the drop -- handleFileAttachment owns the in-flight drop logic via
+      // pasteUndoCountRef so undo correctly removes pending attachments.
       if (!onAttachmentAdd) return;
       const files = Array.from(e.dataTransfer.files);
+      if (files.length > 0) {
+        pushSnapshot(captureSnapshot(), { boundary: true });
+      }
       for (const file of files) {
         await handleFileAttachment(file);
       }
-    }, [onAttachmentAdd, handleFileAttachment, value, onChange, workspacePath, sessionRegistry]);
+    }, [onAttachmentAdd, handleFileAttachment, value, onChange, workspacePath, sessionRegistry, pushSnapshot, captureSnapshot]);
 
     // Threshold for converting large text pastes to attachments (25 lines or 2000 characters)
     const LARGE_PASTE_LINE_THRESHOLD = 25;
@@ -1038,6 +1151,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
               const ext = file.type.split('/')[1] || 'png';
               const uniqueName = `pasted-image-${timestamp}.${ext}`;
               const renamedFile = new File([file], uniqueName, { type: file.type });
+              pushSnapshot(captureSnapshot(), { boundary: true });
               await handleFileAttachment(renamedFile);
             }
             return; // Exit early after handling image
@@ -1059,6 +1173,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           e.preventDefault();
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
           const textFile = new File([pastedText], `pasted-text-${timestamp}.txt`, { type: 'text/plain' });
+          pushSnapshot(captureSnapshot(), { boundary: true });
           await handleFileAttachment(textFile);
           return;
         }
@@ -1072,16 +1187,21 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         // When pasting into empty input, prepend newline to avoid '#' being first character
         // When pasting into non-empty input, use normal paste behavior
         const newValue = value.trim() === '' ? '\n' + pastedText : value + pastedText;
+        pushSnapshot(captureSnapshot(), { boundary: true });
         onChange(newValue);
       }
-    }, [onAttachmentAdd, handleFileAttachment, provider, value, onChange, sessionId]);
+      // Note: ordinary in-line text pastes fall through to the textarea's
+      // native paste, which fires onChange and is recorded by the typing
+      // path (with coalescing).
+    }, [onAttachmentAdd, handleFileAttachment, provider, value, onChange, sessionId, pushSnapshot, captureSnapshot]);
 
     // Handle attachment removal
     const handleRemoveAttachment = useCallback((attachmentId: string) => {
       if (onAttachmentRemove) {
+        pushSnapshot(captureSnapshot(), { boundary: true });
         onAttachmentRemove(attachmentId);
       }
-    }, [onAttachmentRemove]);
+    }, [onAttachmentRemove, pushSnapshot, captureSnapshot]);
 
     // Handle converting a text attachment back to prompt text
     const handleConvertToText = useCallback(async (attachment: ChatAttachment) => {
@@ -1093,6 +1213,10 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
         if (result.success && result.data) {
           // Append the text to the current input value
           const newValue = value ? `${value}\n${result.data}` : result.data;
+          // Single boundary covers both the value change and the attachment
+          // removal so undo restores the attachment AND clears the appended
+          // text in one step.
+          pushSnapshot(captureSnapshot(), { boundary: true });
           onChange(newValue);
 
           // Remove the attachment
@@ -1105,7 +1229,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
       } catch (error) {
         console.error('[AIInput] Failed to convert attachment to text:', error);
       }
-    }, [value, onChange, onAttachmentRemove]);
+    }, [value, onChange, onAttachmentRemove, pushSnapshot, captureSnapshot]);
 
     const handleSend = () => {
       if (value.trim() && !disabled && processingAttachments.length === 0) {
@@ -1266,7 +1390,30 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
             data-testid={testId}
             className="ai-chat-input-field nim-scrollbar-hidden flex-1 min-h-9 py-2 px-3 bg-[var(--nim-bg)] border border-[var(--nim-border)] rounded-md text-[var(--nim-text)] text-[13px] font-[inherit] resize-none outline-none transition-colors duration-200 focus:border-[var(--nim-primary)] disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-[var(--nim-text-faint)]"
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              // textarea onChange only fires from real user input events
+              // (typing, native paste, drag-into-text). Programmatic value
+              // changes from the parent do not trigger this. Push the
+              // pre-edit snapshot so undo can roll back the typing burst.
+              if (!isComposingRef.current) {
+                pushSnapshot(captureSnapshot());
+              }
+              onChange(e.target.value);
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+              // Capture pre-composition state once; any keystrokes during
+              // composition are skipped, then a single boundary snapshot is
+              // pushed on compositionend.
+              preCompositionSnapshotRef.current = captureSnapshot();
+            }}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+              if (preCompositionSnapshotRef.current) {
+                pushSnapshot(preCompositionSnapshotRef.current, { boundary: true });
+                preCompositionSnapshotRef.current = null;
+              }
+            }}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             onFocus={() => setIsFocused(true)}
