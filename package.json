@@ -54,6 +54,7 @@
     "packages/runtime",
     "packages/core",
     "packages/collabv3",
+    "packages/collabv3-metrics",
     "packages/ios",
     "packages/extension-sdk",
     "packages/extensions/*",
