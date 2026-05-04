@@ -18,6 +18,8 @@ import {PostHogProvider} from "posthog-js/react";
 import {beforePostHogSendWeb} from "../main/services/analytics/analytics-utils.ts";
 import { initMonacoEditor } from './utils/monacoConfig';
 import { store } from '@nimbalyst/runtime/store';
+import { registerLocalAssetUrlConverter } from '@nimbalyst/runtime';
+import { nimAssetUrl } from './utils/assetUrl';
 import { initializeTheme } from './hooks/useTheme';
 import { offscreenEditorRenderer } from './services/OffscreenEditorRenderer';
 import {
@@ -65,6 +67,12 @@ import {
 } from './store/atoms/trackerAutomationAtoms';
 
 // console.log('[RENDERER] Imports complete at', new Date().toISOString());
+
+// Issue #146: route runtime local-asset URLs through the `nim-asset://`
+// custom protocol. The main window runs with `webSecurity: true`, which
+// blocks `<img src="file://...">`. Must register before any component
+// renders an image. Runs in both normal and capture mode.
+registerLocalAssetUrlConverter(nimAssetUrl);
 
 // Initialize offscreen editor renderer and set up IPC listeners.
 // This runs in BOTH normal mode and capture mode.
