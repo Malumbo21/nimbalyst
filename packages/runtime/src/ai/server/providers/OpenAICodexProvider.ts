@@ -1560,13 +1560,17 @@ export class OpenAICodexProvider extends BaseAgentProvider {
       }
     }
 
-    if (Object.keys(codexMcpServers).length === 0) {
-      return undefined;
+    const configOverrides: Record<string, unknown> = {
+      // Codex SDK documents this config flag as the switch for surfacing
+      // raw agent reasoning in streamed events.
+      show_raw_agent_reasoning: true,
+    };
+
+    if (Object.keys(codexMcpServers).length > 0) {
+      configOverrides.mcp_servers = codexMcpServers;
     }
 
-    return {
-      mcp_servers: codexMcpServers,
-    };
+    return configOverrides;
   }
 
   private toCodexServerName(serverName: string, usedServerNames: Set<string>): string {
