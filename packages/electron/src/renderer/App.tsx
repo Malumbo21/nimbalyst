@@ -149,7 +149,7 @@ import {
   electronStorageBackend,
   initializeElectronStorageBackend,
 } from './extensions/panels';
-import { setStorageBackend } from '@nimbalyst/runtime';
+import { setStorageBackend, getExtensionEditorAPI } from '@nimbalyst/runtime';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { extensionPanelAIContextAtom } from './store/atoms/extensionPanels';
 import { setDiffTreeGroupByDirectoryAtom, setAgentFileScopeModeAtom, setHiddenGutterButtonsAtom, hydrateFileGutterCollapsedAtom } from './store/atoms/projectState';
@@ -248,7 +248,8 @@ export default function App() {
 
         // Initialize the extension system (discovers and loads extensions)
         // This MUST complete before any editors are mounted so that extension nodes
-        // (like DataModelNode) are registered with the pluginRegistry
+        // (like DataModelNode) are published into the runtime extension stores
+        // and included in the editor's Lexical extension graph.
         await registerExtensionSystem();
         logger.ui.info('[Extensions] Extension system initialized');
 
@@ -557,6 +558,11 @@ export default function App() {
         },
         // Expose DocumentModelRegistry for multi-editor coordination tests
         documentModelRegistry: DocumentModelRegistry,
+        // Look up an extension editor's imperative API by file path. Replaces
+        // the legacy per-extension window globals (e.g.
+        // window.__excalidraw_getEditorAPI) that E2E tests used to poke
+        // editors directly.
+        getExtensionEditorAPI: (filePath: string) => getExtensionEditorAPI(filePath),
         // Open a file in a real AgentMode workstream editor tab (for multi-editor
         // tests). Creates a real session via IPC, selects it as the active
         // workstream, adds the file to openFilePaths, and switches layoutMode
@@ -1877,6 +1883,31 @@ export default function App() {
             });
             return;
           }
+
+          // In-document anchor link: scroll to the matching id inside the
+          // active editor scroll container, NOT the whole document. Multiple
+          // files can be open; we want the heading inside the same editor.
+          if (href && href.startsWith('#') && href.length > 1) {
+            let targetId: string;
+            try {
+              targetId = decodeURIComponent(href.slice(1));
+            } catch {
+              targetId = href.slice(1);
+            }
+            const scrollContainer = anchor.closest('.editor-scroller');
+            const scope: ParentNode = scrollContainer ?? document;
+            const escapedId =
+              typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+                ? CSS.escape(targetId)
+                : targetId.replace(/(["\\\]\[\(\)\.:;'#])/g, '\\$1');
+            const targetElement = scope.querySelector(`#${escapedId}`);
+            if (targetElement) {
+              event.preventDefault();
+              event.stopPropagation();
+              targetElement.scrollIntoView({ block: 'start', behavior: 'smooth' });
+              return;
+            }
+          }
           break;
         }
         target = target.parentElement;
@@ -1892,7 +1923,7 @@ export default function App() {
 
   // Show nothing while initializing - let HTML/CSS background show through
   // Wait for both initial state and extensions to be ready before rendering editors
-  // This ensures extension nodes (like DataModelNode) are registered with the pluginRegistry
+  // This ensures extension nodes (like DataModelNode) are published into the runtime extension stores
   if (isInitializing || !extensionsReady) {
     return <div className="h-screen" />;
   }
