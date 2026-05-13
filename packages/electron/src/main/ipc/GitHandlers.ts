@@ -56,6 +56,29 @@ function findNearestGitRoot(filePath: string): string | null {
   }
 }
 
+export function isDetachedHeadState(branch: string | null | undefined): boolean {
+  const normalized = branch?.trim();
+  if (!normalized) return false;
+
+  return normalized === 'HEAD'
+    || normalized === '(no branch)'
+    || normalized.startsWith('(HEAD detached')
+    || normalized.startsWith('HEAD detached')
+    || normalized.includes('no branch');
+}
+
+export function normalizeCurrentBranch(branch: string | null | undefined): string {
+  const normalized = branch?.trim() || '';
+  if (!normalized) return '';
+  return isDetachedHeadState(normalized) ? 'HEAD' : normalized;
+}
+
+export function normalizeBranchSelection(branch: string | null | undefined): string | undefined {
+  const normalized = branch?.trim();
+  if (!normalized) return undefined;
+  return isDetachedHeadState(normalized) ? 'HEAD' : normalized;
+}
+
 export function resolveGitDiffTarget(
   workspacePath: string,
   filePath: string
@@ -117,7 +140,7 @@ export function registerGitHandlers(): void {
     try {
       const git: SimpleGit = simpleGit(workspacePath, { config: ['core.optionalLocks=false'] });
       const status = await git.status();
-      const branch = status.current || 'HEAD';
+      const branch = normalizeCurrentBranch(status.current) || 'HEAD';
 
       return {
         branch,
@@ -181,8 +204,9 @@ export function registerGitHandlers(): void {
         }
 
         // Branch must be a positional arg after options
-        if (options?.branch) {
-          rawArgs.push(options.branch);
+        const branchArg = normalizeBranchSelection(options?.branch);
+        if (branchArg) {
+          rawArgs.push(branchArg);
         }
 
         const rawOutput = await git.raw(['log', ...rawArgs]);
@@ -226,14 +250,14 @@ export function registerGitHandlers(): void {
     try {
       const git: SimpleGit = simpleGit(workspacePath);
       const summary = await git.branch();
-      let current = summary.current;
+      let current = normalizeCurrentBranch(summary.current);
       let branches = summary.all;
 
       // In a freshly initialized repo with no commits, `git branch` reports no
       // branches even though `git status` knows the unborn branch name.
       if (!current) {
         const status = await git.status();
-        current = status.current || '';
+        current = normalizeCurrentBranch(status.current);
       }
       if (current && branches.length === 0) {
         branches = [current];
@@ -263,7 +287,13 @@ export function registerGitHandlers(): void {
         try {
           const git: SimpleGit = simpleGit(workspacePath);
           const status = await git.status();
-          const branch = status.current || '';
+          const branch = normalizeCurrentBranch(status.current);
+          if (!branch || branch === 'HEAD') {
+            return {
+              success: false,
+              error: 'You are in detached HEAD. Checkout a branch before pushing.',
+            };
+          }
 
           const pushArgs: string[] = [];
           const remote = options?.remote || 'origin';
@@ -297,6 +327,14 @@ export function registerGitHandlers(): void {
       return gitOperationLock.withLock(workspacePath, 'git:pull', async () => {
         try {
           const git: SimpleGit = simpleGit(workspacePath);
+          const status = await git.status();
+          const branch = normalizeCurrentBranch(status.current);
+          if (!branch || branch === 'HEAD') {
+            return {
+              success: false,
+              error: 'You are in detached HEAD. Checkout a branch before pulling.',
+            };
+          }
           const pullArgs: string[] = [];
           if (options?.rebase) {
             pullArgs.push('--rebase');
@@ -433,7 +471,13 @@ export function registerGitHandlers(): void {
       try {
         const git: SimpleGit = simpleGit(workspacePath);
         const status = await git.status();
-        const targetBranch = branch || status.current || '';
+        const targetBranch = branch || normalizeCurrentBranch(status.current);
+        if (!targetBranch || targetBranch === 'HEAD') {
+          return {
+            success: false,
+            error: 'You are in detached HEAD. Checkout a branch before setting upstream.',
+          };
+        }
         await git.push(['--set-upstream', remote, targetBranch]);
         return { success: true };
       } catch (error) {

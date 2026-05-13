@@ -531,6 +531,8 @@ export function GitLogPanel({ host }: PanelHostProps) {
   ) : '';
 
   const hasChanges = status?.hasUncommitted ?? false;
+  const isDetachedHead = status?.branch === 'HEAD';
+  const detachedHeadMessage = 'Detached HEAD: checkout a branch before pulling or pushing.';
 
   return (
     <div
@@ -582,6 +584,11 @@ export function GitLogPanel({ host }: PanelHostProps) {
               {remoteStatus}
             </span>
           )}
+          {isDetachedHead && (
+            <span className="git-log-remote-status diverged" title={detachedHeadMessage}>
+              detached HEAD
+            </span>
+          )}
         </div>
 
         <div className="git-log-toolbar-actions">
@@ -589,8 +596,8 @@ export function GitLogPanel({ host }: PanelHostProps) {
           <button
             className="git-log-action-btn"
             onClick={handlePush}
-            disabled={!!actionLoading}
-            title="Push"
+            disabled={!!actionLoading || isDetachedHead}
+            title={isDetachedHead ? detachedHeadMessage : 'Push'}
           >
             {actionLoading === 'push' ? '...' : '\u2191 Push'}
           </button>
@@ -598,16 +605,16 @@ export function GitLogPanel({ host }: PanelHostProps) {
             <button
               className="git-log-action-btn git-log-split-btn-main"
               onClick={handlePull}
-              disabled={!!actionLoading}
-              title={`Pull (${pullStrategy})`}
+              disabled={!!actionLoading || isDetachedHead}
+              title={isDetachedHead ? detachedHeadMessage : `Pull (${pullStrategy})`}
             >
               {actionLoading === 'pull' ? '...' : '\u2193 Pull'}
             </button>
             <button
               className="git-log-action-btn git-log-split-btn-arrow"
               onClick={() => setPullMenuOpen(v => !v)}
-              disabled={!!actionLoading}
-              title="Pull strategy"
+              disabled={!!actionLoading || isDetachedHead}
+              title={isDetachedHead ? detachedHeadMessage : 'Pull strategy'}
             >
               {'\u25BE'}
             </button>
