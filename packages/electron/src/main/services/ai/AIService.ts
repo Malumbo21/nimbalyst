@@ -3714,13 +3714,6 @@ export class AIService {
     }
     this.matchDebounceTimers.clear();
 
-    // Clear any remaining references
-    try {
-      this.sessionManager = null as any;
-      this.settingsStore = null;
-    } catch (error) {
-      console.error('[AIService] Error clearing references:', error);
-    }
   }
 
   // ============================================================================
