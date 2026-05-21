@@ -11,10 +11,17 @@ import {
 interface ActionPromptsDropdownProps {
   workspacePath: string;
   /**
-   * Called with the action body when the user picks an action. The composer
-   * should replace its draft with this string and push an undo snapshot.
+   * Called with the action body when the user picks an action whose config is
+   * `launch: same-session` (or has no config at all). The composer should
+   * replace its draft with this string and push an undo snapshot.
    */
   onInsert: (body: string) => void;
+  /**
+   * Called when the user picks an action whose config is `launch: new-session`.
+   * If omitted, the dropdown falls back to the same-session insert path so
+   * the action still does something useful.
+   */
+  onLaunchNewSession?: (action: ActionPrompt) => void | Promise<void>;
 }
 
 function firstLinePreview(body: string, maxLen = 80): string {
@@ -24,7 +31,7 @@ function firstLinePreview(body: string, maxLen = 80): string {
   return trimmed.slice(0, maxLen - 1) + '…';
 }
 
-export function ActionPromptsDropdown({ workspacePath, onInsert }: ActionPromptsDropdownProps) {
+export function ActionPromptsDropdown({ workspacePath, onInsert, onLaunchNewSession }: ActionPromptsDropdownProps) {
   const state = useAtomValue(actionPromptsAtomFamily(workspacePath));
   const setState = useSetAtom(actionPromptsAtomFamily(workspacePath));
   const posthog = usePostHog();
@@ -77,6 +84,25 @@ export function ActionPromptsDropdown({ workspacePath, onInsert }: ActionPrompts
 
   const handleSelect = useCallback(
     (action: ActionPrompt) => {
+      const isLauncher = action.config?.launch === 'new-session';
+      if (isLauncher && onLaunchNewSession) {
+        void onLaunchNewSession(action);
+        menu.setIsOpen(false);
+        try {
+          posthog?.capture('action_prompt_launched_new_session', {
+            actionCount: actions.length,
+            bodyLength: action.body.length,
+            model: action.config?.model ?? null,
+            foreground: action.config?.foreground ?? true,
+            autoSubmit: action.config?.autoSubmit ?? true,
+            worktree: action.config?.worktree ?? false,
+          });
+        } catch {
+          // analytics is best-effort
+        }
+        return;
+      }
+
       onInsert(action.body);
       menu.setIsOpen(false);
       try {
@@ -88,7 +114,7 @@ export function ActionPromptsDropdown({ workspacePath, onInsert }: ActionPrompts
         // analytics is best-effort
       }
     },
-    [onInsert, menu, posthog, actions.length]
+    [onInsert, onLaunchNewSession, menu, posthog, actions.length]
   );
 
   const handleSeed = useCallback(async () => {
@@ -218,26 +244,42 @@ export function ActionPromptsDropdown({ workspacePath, onInsert }: ActionPrompts
 
             {hasActions && (
               <div className="action-prompts-dropdown-list max-h-[320px] overflow-y-auto py-1">
-                {actions.map((action, idx) => (
-                  <button
-                    key={action.id}
-                    type="button"
-                    ref={(el) => {
-                      itemRefs.current[idx] = el;
-                    }}
-                    onClick={() => handleSelect(action)}
-                    onMouseEnter={() => setHighlightedIndex(idx)}
-                    data-testid={`action-prompt-item-${action.id}`}
-                    className={`action-prompts-dropdown-item flex flex-col items-start gap-0.5 w-full text-left px-2 py-1.5 rounded border-none cursor-pointer text-[var(--nim-text)] ${
-                      idx === highlightedIndex ? 'bg-[var(--nim-bg-hover)]' : 'bg-transparent'
-                    }`}
-                  >
-                    <span className="text-[12px] font-medium leading-tight">{action.label}</span>
-                    <span className="text-[11px] text-[var(--nim-text-muted)] leading-tight truncate w-full">
-                      {firstLinePreview(action.body)}
-                    </span>
-                  </button>
-                ))}
+                {actions.map((action, idx) => {
+                  const isLauncher = action.config?.launch === 'new-session';
+                  const launcherSubtitle = isLauncher
+                    ? `Opens new session${action.config?.model ? ` · ${action.config.model}` : ''}`
+                    : null;
+                  return (
+                    <button
+                      key={action.id}
+                      type="button"
+                      ref={(el) => {
+                        itemRefs.current[idx] = el;
+                      }}
+                      onClick={() => handleSelect(action)}
+                      onMouseEnter={() => setHighlightedIndex(idx)}
+                      data-testid={`action-prompt-item-${action.id}`}
+                      data-action-launch={isLauncher ? 'new-session' : 'same-session'}
+                      className={`action-prompts-dropdown-item flex items-start gap-2 w-full text-left px-2 py-1.5 rounded border-none cursor-pointer text-[var(--nim-text)] ${
+                        idx === highlightedIndex ? 'bg-[var(--nim-bg-hover)]' : 'bg-transparent'
+                      }`}
+                    >
+                      <span className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
+                        <span className="text-[12px] font-medium leading-tight">{action.label}</span>
+                        <span className="text-[11px] text-[var(--nim-text-muted)] leading-tight truncate w-full">
+                          {launcherSubtitle ?? firstLinePreview(action.body)}
+                        </span>
+                      </span>
+                      {isLauncher && (
+                        <MaterialSymbol
+                          icon="open_in_new"
+                          size={14}
+                          className="shrink-0 mt-0.5 text-[var(--nim-text-faint)]"
+                        />
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
 

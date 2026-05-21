@@ -1,15 +1,32 @@
 import { atom } from 'jotai';
 import { atomFamily } from '../debug/atomFamilyRegistry';
 
+export type ActionLaunch = 'same-session' | 'new-session';
+
+export interface ActionLaunchConfig {
+  launch: ActionLaunch;
+  model?: string;
+  foreground: boolean;
+  autoSubmit: boolean;
+  worktree: boolean;
+}
+
 export interface ActionPrompt {
   id: string;
   label: string;
   body: string;
+  config?: ActionLaunchConfig;
 }
 
 export interface ActionPromptParseDiagnostic {
   level: 'warning';
-  code: 'duplicate-heading' | 'empty-body';
+  code:
+    | 'duplicate-heading'
+    | 'empty-body'
+    | 'unknown-action-key'
+    | 'invalid-launch'
+    | 'invalid-bool'
+    | 'invalid-model';
   label: string;
   message: string;
 }

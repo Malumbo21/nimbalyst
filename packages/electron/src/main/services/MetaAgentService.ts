@@ -215,6 +215,86 @@ export class MetaAgentService {
     this.started = false;
   }
 
+  /**
+   * Launch a sibling session in the same workstream from a user-triggered
+   * action prompt (the Actions dropdown in the AI composer). This is the
+   * non-MCP entry point: unlike `spawnSession` (called from the meta-agent
+   * MCP server), this is invoked from a human IPC and returns a typed
+   * result, not stringified JSON.
+   *
+   * Workstream/worktree/model resolution mirrors `spawnSession` exactly:
+   * - sibling under the parent's workstream (creating the container if needed)
+   * - inherit parent's worktree unless `useWorktree=true`
+   * - explicit `model` wins; otherwise inherit caller's model
+   *
+   * When `autoSubmit=true` the prompt is queued and processing starts; when
+   * `autoSubmit=false` the session is created with no queued prompt so the
+   * renderer can prefill the draft input for the user to edit before sending.
+   */
+  public async launchActionSession(
+    parentSessionId: string,
+    workspaceId: string,
+    args: {
+      prompt: string;
+      title?: string;
+      model?: string;
+      autoSubmit: boolean;
+      useWorktree?: boolean;
+    }
+  ): Promise<{
+    sessionId: string;
+    workstreamId: string | null;
+    worktreeId: string | null;
+    promotedParent: boolean;
+    queuedInitialPrompt: boolean;
+  }> {
+    if (!args?.prompt?.trim()) {
+      throw new Error('prompt is required');
+    }
+
+    const parent = await AISessionsRepository.get(parentSessionId);
+    if (!parent || parent.workspacePath !== workspaceId) {
+      throw new Error(`Parent session ${parentSessionId} not found in this workspace`);
+    }
+
+    const resolved = await this.resolveOrCreateWorkstream(parent, workspaceId);
+    const workstreamId = resolved.workstreamId;
+
+    const inheritedWorktreeId =
+      !args.useWorktree && parent.worktreeId ? parent.worktreeId : undefined;
+
+    // Explicit model wins; otherwise inherit caller's model (e.g. keep "opus"
+    // on "opus") rather than dropping to the global default.
+    const effectiveModel = args.model ?? parent.model ?? undefined;
+
+    // Pass prompt only when autoSubmit is true; createChildSessionInternal
+    // queues + triggers only when a prompt is supplied. For prefill mode we
+    // omit it so nothing runs until the user hits Send in the new session.
+    const childResult = await this.createChildSessionInternal(parentSessionId, workspaceId, {
+      title: args.title,
+      prompt: args.autoSubmit ? args.prompt : undefined,
+      useWorktree: !!args.useWorktree,
+      worktreeId: inheritedWorktreeId,
+      model: effectiveModel,
+      parentSessionIdOverride: workstreamId,
+    });
+
+    // Always fire-and-forget for human-triggered launches — the user can
+    // watch the new session themselves; no need to surface child-completion
+    // notifications back to the originating session.
+    await AISessionsRepository.updateMetadata(childResult.sessionId, {
+      metadata: { notifyParent: false },
+    });
+
+    return {
+      sessionId: childResult.sessionId,
+      workstreamId,
+      worktreeId: childResult.worktreeId ?? null,
+      promotedParent: resolved.promotedParent,
+      queuedInitialPrompt: childResult.queuedInitialPrompt,
+    };
+  }
+
   private registerIpcHandlers(): void {
     if (this.ipcHandlersRegistered) {
       return;

@@ -890,6 +890,54 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     }
   }, [sessionId, sessionData, draftInput, draftAttachments, isLoading, getEffectiveDocumentContext, aiMode, workspacePath, setDraftInput, setDraftAttachments, setLastSubmitAt, resetHistory, updateSessionStore, handleQueue, setIsProcessing, messages, mode, onClearSession, onClearAgentSession, clearAIInputHistory]);
 
+  // Launch a sibling session from a `launch: new-session` action prompt.
+  // Builds the originating-session mention prefix here (in the renderer) so the
+  // main process doesn't have to know about session titles or shortIds, and
+  // delegates the spawn + draft/focus orchestration to the action-prompts IPC.
+  const handleLaunchActionInNewSession = useCallback(
+    async (action: import('../../store/atoms/actionPrompts').ActionPrompt) => {
+      if (!workspacePath) return;
+      if (!action?.config || action.config.launch !== 'new-session') return;
+
+      const registry = store.get(sessionRegistryAtom);
+      const parentMeta = registry.get(sessionId);
+      const parentTitle = (parentMeta?.title || 'Session').trim();
+      // Action body comes first so slash commands like /implement and /review
+      // remain at character 0 of the prompt (Claude Code only recognizes them
+      // when they lead the message).
+      //
+      // Append the full UUID (not the 5-char short ID used in the composer)
+      // for two reasons:
+      //   1. The receiving session's MarkdownRenderer only treats a link as a
+      //      session reference when the href matches the full UUID format
+      //      (SESSION_UUID_RE in runtime/MarkdownRenderer.tsx). A short ID
+      //      renders as plain text.
+      //   2. The receiving agent's session-context MCP tools
+      //      (get_session_summary, etc.) take a full UUID; a 5-char prefix
+      //      isn't resolvable on the server side and we don't run the
+      //      composer-side expandSessionMentions() pass on this path.
+      const prompt = `${action.body}\n\nOriginating session: @@[${parentTitle}](${sessionId})`;
+
+      try {
+        await window.electronAPI.invoke('action-prompts:launch-new-session', {
+          workspacePath,
+          parentSessionId: sessionId,
+          prompt,
+          actionLabel: action.label,
+          config: {
+            model: action.config.model,
+            foreground: action.config.foreground,
+            autoSubmit: action.config.autoSubmit,
+            worktree: action.config.worktree,
+          },
+        });
+      } catch (err) {
+        console.error('[SessionTranscript] Failed to launch action in new session:', err);
+      }
+    },
+    [workspacePath, sessionId]
+  );
+
   const handleCancel = useCallback(async () => {
     try {
       await window.electronAPI.invoke('ai:cancelRequest', sessionId);
@@ -1799,6 +1847,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         queueCount={queuedPrompts.length}
         currentFilePath={currentFilePath}
         lastUserMessageTimestamp={lastUserMessageTimestamp}
+        onLaunchActionInNewSession={handleLaunchActionInNewSession}
       />
     </div>
   );

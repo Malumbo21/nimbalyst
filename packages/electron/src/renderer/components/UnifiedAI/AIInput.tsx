@@ -15,6 +15,7 @@ import { PendingVoiceCommand } from './PendingVoiceCommand';
 import { pendingVoiceCommandAtom, voiceActiveSessionIdAtom, type PendingVoiceCommand as PendingVoiceCommandType } from '../../store/atoms/voiceModeState';
 import { ContextUsageDisplay } from './ContextUsageDisplay';
 import { ActionPromptsDropdown } from './ActionPromptsDropdown';
+import type { ActionPrompt } from '../../store/atoms/actionPrompts';
 import { MockupAnnotationIndicator } from './MockupAnnotationIndicator';
 import { TextSelectionIndicator } from './TextSelectionIndicator';
 import { EditorContextIndicator } from './EditorContextIndicator';
@@ -103,6 +104,15 @@ interface AIInputProps {
 
   // Test ID for E2E testing
   testId?: string;
+
+  /**
+   * Called when the user picks an action prompt whose config is
+   * `launch: new-session`. The handler is expected to spawn a sibling
+   * session, prefix the body with an originating-session mention, and
+   * submit-or-prefill per the action's config. If omitted, launcher actions
+   * fall back to inserting into the current draft.
+   */
+  onLaunchActionInNewSession?: (action: ActionPrompt) => void | Promise<void>;
 }
 
 /**
@@ -152,6 +162,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     currentFilePath,
     lastUserMessageTimestamp,
     testId,
+    onLaunchActionInNewSession,
   }, ref) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [typeaheadMatch, setTypeaheadMatch] = useState<TriggerMatch | null>(null);
@@ -1283,6 +1294,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
                   <ActionPromptsDropdown
                     workspacePath={workspacePath}
                     onInsert={handleActionPromptInsert}
+                    onLaunchNewSession={onLaunchActionInNewSession}
                   />
                 </span>
               </HelpTooltip>
