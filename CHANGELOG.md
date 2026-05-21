@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- New features go here -->
 - Seeded `nimbalyst-local/ai-actions.md` now includes example actions for launching sibling planning and worktree implementation sessions.
 - Tracker screen now has a true table view with aligned headers, sortable columns, resizable widths, and shared row interactions.
+- "Share to Team" now opens a folder picker dialog so you can choose the destination folder (and rename the shared document) before sharing; the last-used folder is remembered per workspace.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transcript, model-picker, session-history, and shared editor dropdown menus now use floating-ui portals so they stay visible instead of clipping inside panels.
 - Agent transcript no longer repaints on every streamed token or keystroke, so text selection inside running sessions stays usable.
 - Dev-mode transcript reprocess now refreshes transcript views without marking sessions unread, and child session context menus under workstreams and blitz worktrees now use the shared session actions.
+- Settings Alpha badges now show the shared tooltip with alpha risk details, including shared-data loss caveats and future Team subscription pricing.
 
 ### Removed
 <!-- Removed features go here -->
