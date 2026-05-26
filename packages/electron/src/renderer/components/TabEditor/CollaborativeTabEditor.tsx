@@ -791,50 +791,48 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         fileName={fileName}
       />
 
-      {documentType === 'markdown' && (
-        <UnifiedEditorHeaderBar
-          filePath={filePath}
-          fileName={fileName}
-          workspaceId={activeConfig.workspacePath}
-          isMarkdown={true}
-          lexicalEditor={lexicalEditor ?? undefined}
-          breadcrumbContent={
-            localOrigin.binding?.resolvedPath ? (
-              <div className="flex min-w-0 items-center gap-1.5">
-                <span className="shrink-0 text-[var(--nim-text-faint)] text-[12px] uppercase tracking-wide">
-                  Uploaded from
-                </span>
-                <FilePathBreadcrumb
-                  filePath={localOrigin.binding.resolvedPath}
-                  workspacePath={activeConfig.workspacePath}
-                  className="min-w-0 flex-1"
-                />
-              </div>
-            ) : localOrigin.binding ? (
-              <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
-                <span className="shrink-0 text-[var(--nim-text-faint)] text-[12px] uppercase tracking-wide">
-                  Uploaded from
-                </span>
-                <span className="truncate text-[var(--nim-warning)]">
-                  {localOrigin.binding.relativePath} (missing)
-                </span>
-              </div>
-            ) : (
-              <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
-                <span className="shrink-0 text-[var(--nim-text-faint)] text-[12px] uppercase tracking-wide">
-                  Shared doc
-                </span>
-                <span className="truncate text-[var(--nim-text)] font-medium">{fileName}</span>
-              </div>
-            )
-          }
-          showShareLinkButton={false}
-          showSharedDocButton={false}
-          showHistoryAction={true}
-          showCommonFileActions={false}
-          extraActionItems={localOriginActionItems}
-        />
-      )}
+      <UnifiedEditorHeaderBar
+        filePath={filePath}
+        fileName={fileName}
+        workspaceId={activeConfig.workspacePath}
+        isMarkdown={documentType === 'markdown'}
+        lexicalEditor={documentType === 'markdown' ? (lexicalEditor ?? undefined) : undefined}
+        breadcrumbContent={
+          localOrigin.binding?.resolvedPath ? (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0 text-[var(--nim-text-faint)] text-[12px] uppercase tracking-wide">
+                Uploaded from
+              </span>
+              <FilePathBreadcrumb
+                filePath={localOrigin.binding.resolvedPath}
+                workspacePath={activeConfig.workspacePath}
+                className="min-w-0 flex-1"
+              />
+            </div>
+          ) : localOrigin.binding ? (
+            <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
+              <span className="shrink-0 text-[var(--nim-text-faint)] text-[12px] uppercase tracking-wide">
+                Uploaded from
+              </span>
+              <span className="truncate text-[var(--nim-warning)]">
+                {localOrigin.binding.relativePath} (missing)
+              </span>
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
+              <span className="shrink-0 text-[var(--nim-text-faint)] text-[12px] uppercase tracking-wide">
+                Shared doc
+              </span>
+              <span className="truncate text-[var(--nim-text)] font-medium">{fileName}</span>
+            </div>
+          )
+        }
+        showShareLinkButton={false}
+        showSharedDocButton={false}
+        showHistoryAction={true}
+        showCommonFileActions={false}
+        extraActionItems={localOriginActionItems}
+      />
 
       {/* Editor area */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
