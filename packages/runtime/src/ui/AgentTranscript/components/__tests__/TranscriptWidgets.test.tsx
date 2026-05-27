@@ -553,7 +553,7 @@ describe('EditToolResultCard', () => {
         edits={edits}
         workspacePath="/workspace"
         renderEmbeddedFile={renderEmbeddedFile}
-        canEmbedFile={(filePath) => filePath.endsWith('.excalidraw')}
+        canEmbedFile={(filePath: string) => filePath.endsWith('.excalidraw')}
       />
     );
 
@@ -1550,7 +1550,7 @@ describe('ToolCallChanges', () => {
         isExpanded={true}
         workspacePath="/workspace"
         renderEmbeddedFile={renderEmbeddedFile}
-        canEmbedFile={(filePath) => filePath.endsWith('.excalidraw')}
+        canEmbedFile={(filePath: string) => filePath.endsWith('.excalidraw')}
       />
     );
 
