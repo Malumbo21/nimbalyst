@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- Bug fixes go here -->
 - Agent transcript no longer collapses `$7M ... $40M`-style currency text into LaTeX. (#462)
+- Tracker table view now gives the Type column enough width to show its header and icon instead of collapsing to a clipped sliver.
 - Smart commit in worktree sessions now resolves session-edited files against the worktree path, so the cross-reference with git status correctly matches.
 - Blitz no longer silently dismisses the dialog when run against a workspace whose git repo has no commits. (#455)
 
