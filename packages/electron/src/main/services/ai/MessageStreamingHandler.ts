@@ -1991,7 +1991,6 @@ export class MessageStreamingHandler {
                         tokens: contextFillTokens,
                         contextWindow: contextWindowForDisplay,
                       },
-                      updatedAt: Date.now(),
                     } as any,
                   });
                 }
@@ -2101,7 +2100,6 @@ export class MessageStreamingHandler {
                         tokens: contextFillTokens,
                         contextWindow: codexContextWindow,
                       },
-                      updatedAt: Date.now(),
                     } as any,
                   });
                 }

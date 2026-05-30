@@ -12,14 +12,14 @@
  * `tool_use` block (what the agent did) is the small, useful part.
  *
  * Strategy:
- *   - Per `tool_result` block: cap content at TRUNCATE_THRESHOLD_BYTES and
+ *   - Per large tool/output block: cap content at TRUNCATE_THRESHOLD_BYTES and
  *     splice in a human-readable marker explaining the elision.
- *   - Truncate per-block, not per-message -- a message with one big result and
- *     three small ones keeps the small ones intact.
+ *   - Then clamp the whole sync-bound message at MAX_SYNC_MESSAGE_BYTES so a
+ *     few pathological rows cannot still blow up a SessionRoom.
  *   - Leave `tool_use` blocks alone regardless of size; that's the "what
  *     happened" signal users actually want on mobile.
- *   - Pass-through if the content doesn't parse as the expected Claude Code
- *     SDK shape; Codex and other providers go through unmodified for now.
+ *   - Unknown providers fall back to a compact opaque marker rather than
+ *     syncing arbitrarily large raw payloads.
  *
  * Stats: a singleton tracker accumulates byte-savings across the process so we
  * can validate the impact locally before deploying. It self-logs periodically
@@ -27,7 +27,8 @@
  * snapshot for inspection.
  */
 
-const TRUNCATE_THRESHOLD_BYTES = 8 * 1024;
+const TRUNCATE_THRESHOLD_BYTES = 4 * 1024;
+const MAX_SYNC_MESSAGE_BYTES = 16 * 1024;
 const LOG_EVERY_N_MESSAGES = 25;
 const LOG_INTERVAL_MS = 30_000;
 
@@ -179,6 +180,31 @@ function truncateBlockContent(
   }
 
   return null;
+}
+
+function makeWholeMessageMarker(source: string, originalBytes: number): string {
+  const label = source || 'unknown';
+  return (
+    `[Full ${label} message elided from mobile sync: ${formatBytes(originalBytes)} raw. ` +
+    `View on desktop for the full content.]`
+  );
+}
+
+function clampWholeMessage(
+  content: string,
+  source: string,
+): { content: string; bytesAfter: number; elidedBytes: number } {
+  const bytesBefore = utf8ByteLen(content);
+  if (bytesBefore <= MAX_SYNC_MESSAGE_BYTES) {
+    return { content, bytesAfter: bytesBefore, elidedBytes: 0 };
+  }
+
+  const marker = makeWholeMessageMarker(source, bytesBefore);
+  return {
+    content: marker,
+    bytesAfter: utf8ByteLen(marker),
+    elidedBytes: bytesBefore - utf8ByteLen(marker),
+  };
 }
 
 class SyncTruncationTracker {
@@ -393,29 +419,46 @@ export function truncateContentForSync(
   const isCodex =
     source != null && (source.startsWith('openai-codex') || source.startsWith('opencode'));
   if (!isClaudeCode && !isCodex) {
+    const wholeClamp = clampWholeMessage(rawContent, sourceKey);
+    stats.bytesAfter = wholeClamp.bytesAfter;
+    if (wholeClamp.elidedBytes > 0) {
+      stats.blocksTruncated = 1;
+      stats.elidedBytes = wholeClamp.elidedBytes;
+      stats.largestBlockElidedBytes = wholeClamp.elidedBytes;
+    }
     syncTruncationTracker.record(stats, [], sourceKey);
-    return { content: rawContent, stats };
+    return { content: wholeClamp.content, stats };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawContent);
   } catch {
+    const wholeClamp = clampWholeMessage(rawContent, sourceKey);
+    stats.bytesAfter = wholeClamp.bytesAfter;
+    if (wholeClamp.elidedBytes > 0) {
+      stats.blocksTruncated = 1;
+      stats.elidedBytes = wholeClamp.elidedBytes;
+      stats.largestBlockElidedBytes = wholeClamp.elidedBytes;
+    }
     syncTruncationTracker.record(stats, [], sourceKey);
-    return { content: rawContent, stats };
+    return { content: wholeClamp.content, stats };
   }
 
   const blockBytesBefore: number[] = [];
   const modified = isClaudeCode
     ? truncateBlocksInPlace(parsed, stats, blockBytesBefore)
     : truncateCodexItemInPlace(parsed, stats, blockBytesBefore);
-  if (!modified) {
-    syncTruncationTracker.record(stats, [], sourceKey);
-    return { content: rawContent, stats };
+  const providerContent = modified ? JSON.stringify(parsed) : rawContent;
+  const wholeClamp = clampWholeMessage(providerContent, sourceKey);
+  stats.bytesAfter = wholeClamp.bytesAfter;
+  if (wholeClamp.elidedBytes > 0) {
+    stats.blocksTruncated++;
+    stats.elidedBytes += wholeClamp.elidedBytes;
+    if (wholeClamp.elidedBytes > stats.largestBlockElidedBytes) {
+      stats.largestBlockElidedBytes = wholeClamp.elidedBytes;
+    }
   }
-
-  const newContent = JSON.stringify(parsed);
-  stats.bytesAfter = utf8ByteLen(newContent);
 
   syncTruncationTracker.record(stats, blockBytesBefore, sourceKey);
 
@@ -429,5 +472,5 @@ export function truncateContentForSync(
   //     syncTruncationTracker.runningTotalsString(),
   // );
 
-  return { content: newContent, stats };
+  return { content: wholeClamp.content, stats };
 }

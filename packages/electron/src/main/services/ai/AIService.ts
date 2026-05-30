@@ -1401,7 +1401,6 @@ export class AIService {
                     tokens: parsedUsage.totalTokens,
                     contextWindow: parsedUsage.contextWindow,
                   },
-                  updatedAt: Date.now(),
                 } as any,
               });
             }
