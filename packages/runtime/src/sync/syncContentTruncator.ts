@@ -45,6 +45,25 @@ const CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES = new Set([
   'skills/changed',
 ]);
 
+// Claude Agent SDK chunk types whose persisted form never renders -- they only
+// drive live in-memory side effects in ClaudeCodeProvider. The provider now
+// skips persisting these, but this sync-side filter catches the same chunks if
+// they're already sitting in ai_agent_messages from before the persistence fix
+// (e.g. older sessions replayed on first reconnect).
+const CLAUDE_CODE_TRANSIENT_CHUNK_TYPES = new Set([
+  'tool_progress',
+  'tool_use_summary',
+  'auth_status',
+  'rate_limit_event',
+]);
+const CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES = new Set([
+  'hook_started',
+  'hook_response',
+  'task_started',
+  'task_progress',
+  'task_notification',
+]);
+
 export interface PerMessageTruncationStats {
   bytesBefore: number;
   bytesAfter: number;
@@ -56,19 +75,47 @@ export interface PerMessageTruncationStats {
 export function shouldSyncMessageForSessionRoom(
   source: string,
   metadata?: Record<string, unknown> | null,
+  content?: string,
 ): boolean {
-  if (!(source.startsWith('openai-codex') || source.startsWith('opencode'))) {
+  if (source.startsWith('openai-codex') || source.startsWith('opencode')) {
+    const transport = typeof metadata?.transport === 'string' ? metadata.transport : '';
+    const eventType = typeof metadata?.eventType === 'string' ? metadata.eventType : '';
+
+    if (transport !== 'app-server') {
+      return true;
+    }
+
+    return !CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES.has(eventType);
+  }
+
+  if (source === 'claude-code' && content) {
+    // Cheap structural prefilter: only parse JSON when the content could
+    // be one of the transient chunk shapes. Skips the JSON.parse for the
+    // overwhelmingly common assistant / user / result chunks.
+    if (
+      content.includes('"type":"system"')
+      || content.includes('"type":"tool_progress"')
+      || content.includes('"type":"tool_use_summary"')
+      || content.includes('"type":"auth_status"')
+      || content.includes('"type":"rate_limit_event"')
+    ) {
+      try {
+        const parsed = JSON.parse(content) as { type?: string; subtype?: string };
+        if (parsed?.type === 'system' && typeof parsed.subtype === 'string') {
+          return !CLAUDE_CODE_TRANSIENT_SYSTEM_SUBTYPES.has(parsed.subtype);
+        }
+        if (typeof parsed?.type === 'string') {
+          return !CLAUDE_CODE_TRANSIENT_CHUNK_TYPES.has(parsed.type);
+        }
+      } catch {
+        // Non-JSON content -- let it through; the persistence path only
+        // writes plain text via a wrapper, never as a transient type.
+      }
+    }
     return true;
   }
 
-  const transport = typeof metadata?.transport === 'string' ? metadata.transport : '';
-  const eventType = typeof metadata?.eventType === 'string' ? metadata.eventType : '';
-
-  if (transport !== 'app-server') {
-    return true;
-  }
-
-  return !CODEX_APP_SERVER_TRANSIENT_EVENT_TYPES.has(eventType);
+  return true;
 }
 
 interface PerSourceStats {

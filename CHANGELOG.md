@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Opus 4.8 is now selectable in the Claude provider (1M context, dateless ID `claude-opus-4-8`) and is the default Claude model for new installs. (#473)
 - Claude Code variants `opus-4-7` and `opus-4-7-1m` pinned to Opus 4.7 so it stays selectable after the canonical `opus` alias was bumped to 4.8. (#473)
 <!-- New features go here -->
+- Calc Sheets: a new `.calc.md` custom editor for line-oriented worksheets with units, currency-aware evaluation, assertions, Monaco-based editing, and a live result gutter.
 - Alpha SQLite storage backend behind an opt-in Settings → Database migration. Dry-run reports row counts and integrity against your live PGLite without touching it; the real migration preserves PGLite at `pglite-db.migrated-<ts>/` for rollback. WriteCoordinator batches writes through a single lane and chunks slow ops on a background lane; FTS5 mirrors back agent-message and transcript-event search; Database Browser gains a Performance tab.
 - Worktree git panel now has a Manual/Smart commit toggle and "Commit with AI" button, matching the non-worktree experience.
 - Contextual tips: small bottom-left cards that suggest tracker mode, worktree sessions, the keyboard-shortcuts dialog, and theme exploration based on local feature usage.
@@ -23,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 <!-- Changes to existing functionality go here -->
 - Default Claude model bumped from `claude-opus-4-7` to `claude-opus-4-8`. Existing sessions keep their configured model; only new sessions and "reset to default" pick up 4.8. (#473)
+- Monaco editor host wrappers now support custom load/save content transforms so extensions can present normalized editor views while preserving richer on-disk source formats.
 - Bumping a tip or walkthrough version now re-shows it even if the prior version was completed or dismissed.
 - The alpha SQLite backend now migrates session, transcript, tracker, and document stores more completely, with worker-backed execution and expanded validation/adoption flows to keep large migrations and database browsing responsive.
 
@@ -31,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lexical selection-toolbar format dropdowns now render inside the editor root when portaled, so shared dropdown styling and theme backgrounds no longer disappear.
 - AskUserQuestion widget no longer goes blank (header-only "Waiting..." with no options) after switching from Agent mode to Files mode and back when the same session is open in both panels.
 - Mobile sync no longer wastes per-session storage on transient Codex app-server delta and diff-update events, preventing noisy sessions from tripping the 10 MB SessionRoom cap too early.
+- Codex sessions no longer persist transient app-server notifications (message/reasoning deltas, token-usage updates, MCP startup status, thread lifecycle) to the local raw log; only durable item/turn/error events are kept, cutting per-session DB churn for long Codex runs.
+- Claude Code sessions no longer persist transient SDK chunks (hook lifecycle, task progress, tool progress, auth status, rate-limit events) to the local raw log or sync them, since they never render in the canonical transcript.
 - Codex app-server transcripts no longer duplicate commit proposal widgets or final messages when repeated item/turn notifications arrive.
 - SQLite migration now reconciles final PGLite writes before cutover, rollback works after SQLite is active, voice-mode session resume no longer depends on PG-only interval SQL, and SQLite-backed analytics no longer hit PostgreSQL-only queries.
 - Sessions resumed from queued prompts now stay marked running until the continuation actually finishes, so the session dashboard and background-task UI no longer flip to idle mid-turn.

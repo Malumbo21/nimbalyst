@@ -73,6 +73,14 @@ interface PendingAskUserQuestionEntry {
   sessionId: string;
 }
 
+const PERSISTED_APP_SERVER_NOTIFICATION_METHODS = new Set([
+  'item/started',
+  'item/completed',
+  'turn/completed',
+  'turn/failed',
+  'error',
+]);
+
 export class OpenAICodexProvider extends BaseAgentProvider {
   static readonly DEFAULT_MODEL = DEFAULT_MODELS['openai-codex'];
   private static readonly CODEX_EXECUTION_PATTERN = 'OpenAICodex(agent-run:*)';
@@ -2138,7 +2146,8 @@ export class OpenAICodexProvider extends BaseAgentProvider {
 
   /**
    * Store a raw protocol event to the database if present in event metadata.
-   * Each raw event is stored as a separate database row for Codex event tracking.
+   * Meaningful raw events are stored as separate database rows for Codex event
+   * tracking. Transient app-server deltas and status churn are intentionally skipped.
    */
   private async storeRawEventIfPresent(
     event: ProtocolEvent,
@@ -2254,6 +2263,10 @@ export class OpenAICodexProvider extends BaseAgentProvider {
     method: string,
     params: unknown,
   ): boolean {
+    if (!PERSISTED_APP_SERVER_NOTIFICATION_METHODS.has(method)) {
+      return false;
+    }
+
     const notificationKey = this.buildAppServerNotificationKey(method, params);
     if (!notificationKey) {
       return true;
