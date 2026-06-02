@@ -15,20 +15,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
-- Multi-minute main-process beachball when AI sessions edit markdown files containing inline base64-encoded images. Tracker-item regex no longer backtracks catastrophically on long lines.
-- Tool calls (Read, Bash, Edit, commit proposal, etc.) no longer get stuck rendering "running" when multiple AI sessions are open at once.
-- Workstream parent sessions now bubble to the top of the left pane when a child session has new activity.
-- Interactive widgets (AskUserQuestion, ExitPlanMode, GitCommitProposal) render correctly when called via their MCP-prefixed tool names.
-- Workspace search no longer floods main.log with "ripgrep not found at" probe lines on every keystroke; the resolved binary path is cached per process.
-- Quick Open session dialog now returns instantly instead of stalling 12+ seconds and head-of-line-blocking other DB IPCs. Added a partial index on `ai_agent_messages(message_kind, created_at)` so the "list all user prompts" query no longer scans the whole table.
-- Historical user prompts (everything older than the searchable-text extractor's June 1 ship date) now show up in Quick Open. The AgentMessagesBackfill pass was silently aborting on its first UPDATE because the FTS5 AFTER UPDATE trigger ran `'delete'` with NULL content against an inconsistent shadow index and raised SQLITE_CORRUPT_VTAB. Migrations rebuild the FTS index and split the trigger into WHEN-guarded delete/insert halves so the 'delete' command only fires when there is a row in the index to delete.
-- Tracker items with legacy labels no longer crash the backfill on every reconnect, so they actually reach the team room.
-- Tracker label arrays no longer pick up a phantom leading `null` on the SQLite backend.
-- New Worktree button no longer stays disabled in git repos when the initial probe races mount.
-- Calc Sheets PARSE ERR rows are now legible in dark mode; error text and banner colors come from theme-aware CSS vars instead of a hardcoded dark red.
-- Usage analytics document-edit stats and time-series no longer crash on either backend; they now read the actual `document_history.timestamp` column instead of a nonexistent `created_at`.
-- Database backup folders no longer accumulate stranded `temp-backup-*` files. Cleanup now also runs at startup and sweeps both backend directories, including the orphaned PGLite dir on post-migration installs.
-- Database backup catches up at startup and on resume-from-sleep when the last snapshot is older than the 4-hour interval, instead of silently skipping windows when macOS pauses `setInterval` during sleep.
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.63.8] - 2026-06-02
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+- AI edits to markdown files with inline base64 images no longer trigger multi-minute main-process beachballs.
+- Tool calls no longer get stuck at "running" when multiple AI sessions are open.
+- Workstream parent sessions now rise to the top when a child session becomes active.
+- AskUserQuestion, ExitPlanMode, and GitCommitProposal widgets now render via MCP-prefixed tool names.
+- Workspace search now caches the resolved ripgrep path instead of reprobe-logging on every keystroke.
+- Quick Open no longer stalls while listing prompts, and older prompts now appear in results again.
+- Tracker labels no longer crash the backfill on reconnect or gain a phantom leading `null` on SQLite.
+- New Worktree no longer stays disabled in git repos when the initial probe races mount.
+- Calc Sheets PARSE ERR rows are legible in dark mode.
+- Document-edit usage analytics no longer crash on either database backend.
+- Database backups now clean up stranded temp files and catch up after sleep or startup gaps.
+- Database Browser now shows SQLite backup sizes.
 
 ### Removed
 <!-- Removed features go here -->
