@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New Worktree button no longer stays disabled in git repos when the initial probe races mount.
 - Calc Sheets PARSE ERR rows are now legible in dark mode; error text and banner colors come from theme-aware CSS vars instead of a hardcoded dark red.
 - Usage analytics document-edit stats and time-series no longer crash on either backend; they now read the actual `document_history.timestamp` column instead of a nonexistent `created_at`.
+- Database backup folders no longer accumulate stranded `temp-backup-*` files. Cleanup now also runs at startup and sweeps both backend directories, including the orphaned PGLite dir on post-migration installs.
+- Database backup catches up at startup and on resume-from-sleep when the last snapshot is older than the 4-hour interval, instead of silently skipping windows when macOS pauses `setInterval` during sleep.
 
 ### Removed
 <!-- Removed features go here -->
