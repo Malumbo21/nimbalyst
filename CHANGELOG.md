@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Claude Opus 4.8 is now selectable in the Claude provider (1M context, dateless ID `claude-opus-4-8`) and is the default Claude model for new installs. (#473)
 - Claude Code variants `opus-4-7` and `opus-4-7-1m` pinned to Opus 4.7 so it stays selectable after the canonical `opus` alias was bumped to 4.8. (#473)
 - Extension themes can contribute Monaco editor themes via an optional `monaco` block in `contributions.themes[]`, defining `base`, `rules`, and `colors`. Monaco-backed editors register the theme dynamically and switch to it when the user activates the theme; omitting the block keeps the previous `vs` / `vs-dark` fallback.
+- Claude Code sessions now show a Task List panel in the right sidebar with the agent's SDK-native task queue (TaskCreate/TaskUpdate), including status, owner, and blocked-by dependencies.
 <!-- New features go here -->
 
 ### Changed
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Claude Code sessions on Opus 4.8 now actually run on 4.8 (#531) Upgraded `@anthropic-ai/claude-agent-sdk` to 0.3.161 (and `@anthropic-ai/sdk` to 0.100.1 for its peer requirement).
 - Commit proposal diff peeks use the normal default size again instead of collapsing to a tiny bottom-right popover.
 - Quick Open file search no longer lags because hidden tabs stop re-rendering on each keystroke.
 - Fixed an EPIPE feedback loop where the main-process uncaught-exception handler re-entered itself when stderr was broken on Linux, flooding the log until the process died.
