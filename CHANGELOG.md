@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed an EPIPE feedback loop where the main-process uncaught-exception handler re-entered itself when stderr was broken on Linux, flooding the log until the process died.
 - Meta-agent child sessions now inherit the parent session's provider and model instead of silently falling back to a Claude/Opus default for non-Claude parents.
 - iOS: fast typing into the prompt input no longer jumbles characters; synced drafts are no longer applied while the compose field has keyboard focus.
+- iOS: switching back to a recently-viewed session is now instant — the transcript keeps up to 3 sessions warm and no longer waits on the sync round-trip to reveal already-local messages.
+- iOS: fixed the transcript bundle failing to build (and shrank it ~3.8MB) by stopping a tool widget from importing the runtime barrel, which dragged the Anthropic SDK into the browser bundle.
 - "Commit with AI" now prompts the agent to include relevant, commitable, side-effect files.
 
 

@@ -60,6 +60,13 @@ public struct SessionDetailView: View {
     @State private var liveSession: Session?
     @State private var sessionCancellable: AnyDatabaseCancellable?
 
+    /// Tracks the last-rendered session id so we can detach observers /
+    /// diagnostic handlers / sync rooms scoped to the *previous* session when
+    /// `session` is swapped in place (iPad split-view sidebar selection
+    /// change). Set in `.onAppear` for the initial render and updated each
+    /// time `.onChange(of: session.id)` fires.
+    @State private var previousSessionId: String?
+
     /// Live message list from GRDB observation.
     @State private var messages: [Message] = []
     @State private var messagesCancellable: AnyDatabaseCancellable?
@@ -249,6 +256,12 @@ public struct SessionDetailView: View {
             }
         }
         .onAppear {
+            // First render: remember which session we're bound to so
+            // `.onChange(of: session.id)` can detect an in-place swap (iPad
+            // sidebar selection) versus the first appearance.
+            if previousSessionId == nil {
+                previousSessionId = session.id
+            }
             startObserving()
             startLoadTimeout()
             subscribeToDiagnostics()
@@ -280,7 +293,17 @@ public struct SessionDetailView: View {
             }
         }
         .onChange(of: session.id) { _ in
-            resetTranscriptLoadState()
+            // Without `.id(session.id)` on the iPad split-view detail, SwiftUI
+            // reuses this view across sidebar selection changes — so we need
+            // to do the teardown/reinit that a fresh mount would otherwise
+            // have done. `previousSessionId` is set in `.onAppear` for the
+            // initial render, so the first onChange fires here is a real swap.
+            guard let oldId = previousSessionId, oldId != session.id else {
+                previousSessionId = session.id
+                return
+            }
+            swapSession(fromOldId: oldId)
+            previousSessionId = session.id
         }
         .onChange(of: composeText) { newText in
             // Push draft changes back to sync (debounced).
@@ -402,17 +425,15 @@ public struct SessionDetailView: View {
     }
 
     private var shouldWaitForInitialTranscriptMessages: Bool {
-        if !hasObservedInitialMessages { return true }
-        if serverConfirmedNoMessages { return false }
-        if hasExpectedTranscriptMessages {
-            if hasAllExpectedLocalMessages { return false }
-            if !hasCompletedInitialSessionSync { return true }
-            // Sync completed but GRDB hasn't delivered messages yet.
-            // Keep waiting so loadSessionIntoWebView gets real data
-            // instead of rendering the empty "ready to assist" state.
-            return messages.isEmpty
-        }
-        return false
+        // Only block the initial JS load until GRDB delivers its first local
+        // snapshot. Previously this also waited on the session sync round-trip
+        // (hasCompletedInitialSessionSync / hasAllExpectedLocalMessages), which
+        // added a full network RTT to every session switch even when all the
+        // messages were already in the local store — the main cause of the
+        // "switching back isn't instant" lag. The transcript reveal overlay
+        // (isTranscriptReady) still covers any brief empty state, and the
+        // React side keeps the cached transcript mounted across switches.
+        !hasObservedInitialMessages
     }
 
     private var canRevealTranscript: Bool {
@@ -668,6 +689,70 @@ public struct SessionDetailView: View {
         hasCompletedInitialSessionSync = false
         timeoutWorkItem?.cancel()
         startLoadTimeout()
+    }
+
+    /// Tear down every binding scoped to `oldId` and re-init for the current
+    /// `session`. Only used on iPad in-place session swap; iPhone destroys and
+    /// rebuilds the view on each navigation push so this code path doesn't
+    /// fire there.
+    ///
+    /// By the time this runs, `session` already refers to the new session, so
+    /// callees that read `session.*` automatically use the new values.
+    private func swapSession(fromOldId oldId: String) {
+        // Drop the previous session's GRDB observations. `projectCancellable`
+        // is included even when the new session is in the same project — the
+        // observation re-registers in `startObserving()`, and we'd rather pay
+        // a no-op re-registration than carry a stale capture.
+        sessionCancellable?.cancel()
+        messagesCancellable?.cancel()
+        queuedPromptsCancellable?.cancel()
+        projectCancellable?.cancel()
+
+        // Drop the previous session's sync subscriptions.
+        appState.syncManager?.removeSessionSyncDiagnosticHandler(sessionId: oldId)
+        appState.syncManager?.leaveSessionRoom(expectedSessionId: oldId)
+
+        // Cancel any pending per-session debounces/timers.
+        draftDebounceItem?.cancel()
+        draftDebounceItem = nil
+        deliveryTimeoutItem?.cancel()
+        deliveryTimeoutItem = nil
+        promptRefreshWorkItem?.cancel()
+        promptRefreshWorkItem = nil
+
+        // Clear per-session UI state. liveSession/messages/queuedPrompts will
+        // be re-populated by the new observations; the rest are user-driven.
+        liveSession = nil
+        messages = []
+        queuedPrompts = []
+        promptList = []
+        composeText = ""
+        composeFocused = false
+        isApplyingRemoteDraft = false
+        lastLocalEditAt = 0
+        lastSubmitAt = 0
+        sendError = nil
+        deliveryWarning = nil
+        fileSheetDocument = nil
+        fileNotAvailableToast = nil
+
+        resetTranscriptLoadState()
+
+        // Re-init for the new session.
+        startObserving()
+        startObservingQueuedPrompts()
+        subscribeToDiagnostics()
+        appState.syncManager?.joinSessionRoom(sessionId: session.id)
+        appState.syncManager?.markSessionRead(sessionId: session.id)
+
+        // Seed compose from the new session's draft.
+        if let draft = session.draftInput, !draft.isEmpty {
+            isApplyingRemoteDraft = true
+            composeText = draft
+            DispatchQueue.main.async { isApplyingRemoteDraft = false }
+        }
+
+        AnalyticsManager.shared.capture("mobile_session_viewed")
     }
 
     private func startLoadTimeout() {
