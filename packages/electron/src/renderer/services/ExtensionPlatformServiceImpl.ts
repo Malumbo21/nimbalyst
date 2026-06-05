@@ -57,7 +57,7 @@ import * as yProtocolsAwareness from 'y-protocols/awareness';
 // Import editor components for sharing with extensions
 // MonacoEditor is self-contained; MarkdownEditor uses a configured wrapper
 // that wires up platform features (image handling, toolbar)
-import { MonacoEditor } from '@nimbalyst/runtime/editors';
+import { MonacoEditor, MonacoCodeEditor } from '@nimbalyst/runtime/editors';
 import { NimbalystMarkdownEditor } from '../components/editors/NimbalystMarkdownEditor';
 
 // Import DataModel platform service for datamodellm extension
@@ -479,6 +479,10 @@ CHECK:
         // MarkdownEditor is the configured wrapper with platform features (image handling, toolbar)
         MarkdownEditor: NimbalystMarkdownEditor,
         MonacoEditor,
+        // Raw, props-based Monaco wrapper (not EditorHost-integrated). Extensions
+        // that drive the editor instance directly use this instead of MonacoEditor
+        // (see calc-sheets CalcSheetShareViewer).
+        MonacoCodeEditor,
       },
     };
 

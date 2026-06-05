@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Calc Sheets now ship a Falcon 9 `.calc.md` demo and custom syntax coloring for headings, comments, variables, units, and formatters.
 
 ### Fixed
+- `.calc.md` files open in the Calc Sheet editor again: the host now exposes `MonacoCodeEditor` to extensions, so the calc-sheets extension loads instead of falling back to the Lexical editor.
 - Session list rows now expose the full session name via a hover title, matching the session tab, so names clipped in the list stay readable. (#577)
 - Inline tracker item edits now save back to the markdown file for markers without an explicit id, and due-date edits persist across a re-scan instead of being dropped (#404).
 - PR review now shows an actionable message on a GitHub 404 (repo not found or the active `gh` account lacks access — check `gh auth status` / `gh auth switch`) instead of a raw error, and no longer prints a duplicated `api` in the failure text. (#307)
