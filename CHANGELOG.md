@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
+- In Multi-Project mode, a project's tracker list no longer shows another open project's items. (#591)
 - Docs a session just created now sync to mobile immediately, and tapping their transcript link on mobile waits for the doc to sync instead of dead-ending with "not synced to this device".
 - Launching an action in a new session with a different provider's model (e.g. "Implement in Codex" from a Claude session) no longer fails with a model-identifier error.
 - Synced tracker item bodies containing lists or links now load for teammates instead of appearing blank.
