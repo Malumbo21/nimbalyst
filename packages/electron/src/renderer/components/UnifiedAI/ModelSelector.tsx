@@ -35,13 +35,23 @@ interface ModelSelectorProps {
   onModelChange: (modelId: string) => void;
   sessionHasMessages?: boolean;  // Whether current session has any messages
   currentProvider?: string | null;  // Current session provider
+  /**
+   * Render the current model as a non-interactive chip (no dropdown). Used for
+   * committed claude-code-cli sessions where the model is fixed at spawn — we
+   * still want to SHOW which provider/model is running, just not let it change.
+   */
+  readOnly?: boolean;
+  /** Tooltip shown on the read-only chip explaining why it can't change. */
+  readOnlyTitle?: string;
 }
 
 export function ModelSelector({
   currentModel,
   onModelChange,
   sessionHasMessages = false,
-  currentProvider = null
+  currentProvider = null,
+  readOnly = false,
+  readOnlyTitle,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [models, setModels] = useState<Record<string, Model[]>>({});
@@ -148,6 +158,7 @@ export function ModelSelector({
     switch (provider) {
       case 'claude': return 'Claude Chat';
       case 'claude-code': return 'Claude Agent (Claude Code Based)';
+      case 'claude-code-cli': return 'Claude Code CLI (Subscription)';
       case 'openai': return 'OpenAI';
       case 'openai-codex': return 'OpenAI Codex';
       case 'openai-codex-acp': return 'OpenAI Codex (ACP)';
@@ -180,6 +191,23 @@ export function ModelSelector({
     acc[type][provider] = providerModels;
     return acc;
   }, {} as Record<'agents' | 'models', Record<string, Model[]>>);
+
+  // Read-only chip: show the running provider/model without a dropdown. Used by
+  // committed claude-code-cli sessions where the model is fixed at spawn.
+  if (readOnly) {
+    return (
+      <div className="model-selector inline-block">
+        <span
+          className="model-selector-button model-selector-readonly flex items-center gap-1 px-2 py-[3px] rounded-xl text-[11px] font-medium whitespace-nowrap max-w-[200px] bg-[var(--nim-bg-secondary)] text-[var(--nim-text-muted)] border border-[var(--nim-border)] cursor-default"
+          aria-label={`Current model: ${getCurrentModelName()}`}
+          data-testid="model-picker"
+          title={readOnlyTitle}
+        >
+          <span className="model-selector-label overflow-hidden text-ellipsis">{getCurrentModelName()}</span>
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="model-selector inline-block">

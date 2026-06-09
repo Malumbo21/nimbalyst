@@ -129,6 +129,44 @@ export function setTerminalCommandRunning(terminalId: string, isRunning: boolean
   store.set(terminalCommandRunningAtom(terminalId), isRunning);
 }
 
+// --- claude-code-cli raw-terminal drawer (NIM-810) ---
+
+/**
+ * Per-session expand/collapse for the `claude-code-cli` raw-terminal drawer.
+ * Lifted out of SessionTranscript local state so the central reveal listener can
+ * drive it. Default EXPANDED preserves prior behavior (the strip's
+ * IntersectionObserver must fire to spawn the CLI).
+ */
+export const cliTerminalExpandedAtom = atomFamily((_sessionId: string) => atom(true));
+
+/**
+ * Per-session focus pulse: the reveal listener bumps this so the mounted xterm
+ * grabs focus (keyboard nav must reach the native picker). A counter, not a flag,
+ * so repeated reveals each re-focus.
+ */
+export const cliTerminalFocusNonceAtom = atomFamily((_sessionId: string) => atom(0));
+
+/**
+ * Marks that the drawer's current expansion was AUTO-triggered from a collapsed
+ * state (interactive picker). Drives next-normal-prompt collapse without
+ * regressing a drawer the user (or the default) left expanded.
+ */
+export const cliTerminalAutoRevealedAtom = atomFamily((_sessionId: string) => atom(false));
+
+/** Default / clamp bounds for the resizable raw-terminal drawer body (px). */
+export const DEFAULT_CLI_TERMINAL_HEIGHT = 300;
+export const MIN_CLI_TERMINAL_HEIGHT = 120;
+export const MAX_CLI_TERMINAL_HEIGHT = 900;
+
+/**
+ * Per-session height (px) of the `claude-code-cli` raw-terminal drawer body.
+ * Hydrated from session metadata (`cliRawTerminalHeight`) on mount and persisted
+ * back on resize. In-memory default applies to brand-new sessions.
+ */
+export const cliTerminalHeightAtom = atomFamily((_sessionId: string) =>
+  atom(DEFAULT_CLI_TERMINAL_HEIGHT)
+);
+
 /**
  * Load terminals from backend and update atoms
  */

@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { SessionManager, ClaudeCodeProvider, OpenAICodexProvider, OpenAICodexACPProvider, OpenCodeProvider, setPreferredAgentLanguage as setRuntimePreferredAgentLanguage } from '@nimbalyst/runtime/ai/server';
 import { AISessionsRepository } from '@nimbalyst/runtime';
+import { ClaudeCliLauncherConfig } from './ai/claudeCliLauncherSingleton';
 import {
   startSessionNamingServer,
   setUpdateSessionTitleFn,
@@ -231,6 +232,7 @@ export class SessionNamingService {
         OpenAICodexProvider.setSessionNamingServerPort(port);
         OpenAICodexACPProvider.setSessionNamingServerPort(port);
         OpenCodeProvider.setSessionNamingServerPort(port);
+        ClaudeCliLauncherConfig.setSessionNamingServerPort(port);
 
         this.started = true;
       } catch (error) {

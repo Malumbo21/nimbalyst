@@ -115,6 +115,10 @@ export class SessionStateManager extends EventEmitter {
           this.emitEvent({ type: 'session:error', sessionId, workspacePath, error: 'Session error', timestamp: new Date() });
         } else if (status === 'running') {
           this.emitEvent({ type: isStreaming ? 'session:streaming' : 'session:started', sessionId, workspacePath, timestamp: new Date() });
+        } else if (status === 'idle') {
+          // Turn boundary (e.g. claude-code-cli PID watcher): a terminal event so
+          // the renderer clears the running indicator. session:activity would not.
+          this.emitEvent({ type: 'session:completed', sessionId, workspacePath, timestamp: new Date() });
         }
       } else {
         console.warn(`[SessionStateManager] Cannot update activity for unknown session: ${sessionId}`);
@@ -168,6 +172,18 @@ export class SessionStateManager extends EventEmitter {
         sessionId,
         workspacePath: state.workspacePath,
         error: 'Session encountered an error',
+        timestamp: new Date(),
+      });
+    } else if (status === 'idle') {
+      // An explicit idle status is a turn boundary (e.g. the claude-code-cli PID
+      // watcher reporting the CLI finished). Emit a terminal event so the
+      // renderer clears sessionProcessingAtom — session:activity would leave the
+      // running indicator stuck on. The session stays in activeSessions so the
+      // next turn's running transition is still detected.
+      this.emitEvent({
+        type: 'session:completed',
+        sessionId,
+        workspacePath: state.workspacePath,
         timestamp: new Date(),
       });
     } else {

@@ -326,6 +326,10 @@
         "to": "codex-pre-edit-hook.mjs"
       },
       {
+        "from": "resources/claudeCliPermissionHook.cjs",
+        "to": "claudeCliPermissionHook.cjs"
+      },
+      {
         "from": "../extensions",
         "to": "extensions",
         "filter": [

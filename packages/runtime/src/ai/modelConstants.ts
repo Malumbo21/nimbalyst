@@ -270,6 +270,7 @@ export const DEFAULT_MODELS = {
   claude: 'claude:claude-opus-4-8',
   openai: 'openai:gpt-5.5',
   'claude-code': 'claude-code:opus-1m',
+  'claude-code-cli': 'claude-code-cli:opus-1m',
   'openai-codex': 'openai-codex:gpt-5.5',
   'openai-codex-acp': 'openai-codex-acp:gpt-5.5',
   lmstudio: 'lmstudio:local-model',

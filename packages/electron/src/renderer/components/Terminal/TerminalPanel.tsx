@@ -25,6 +25,21 @@ export interface TerminalPanelProps {
   panelVisible?: boolean;
   /** Optional callback when terminal exits */
   onExit?: (exitCode: number) => void;
+  /**
+   * Backend to launch (NIM-806). `'shell'` (default) spawns the user's shell via
+   * `terminal:initialize`; `'claude-cli'` launches the genuine `claude` CLI on the
+   * subscription via `claude-cli:ensure-session` (terminalId IS the session id).
+   * All other channels (output/write/resize/scrollback) are identical.
+   */
+  launchMode?: 'shell' | 'claude-cli';
+  /** Resolved `--model` value passed to the CLI when `launchMode === 'claude-cli'`. */
+  claudeCliModel?: string;
+  /**
+   * Bumped to imperatively focus the xterm (NIM-810) — used when the genuine CLI
+   * opens a native picker so keyboard navigation reaches it. A counter, so each
+   * bump re-focuses even if the value was previously seen.
+   */
+  focusNonce?: number;
 }
 
 // Track if ghostty WASM has been initialized
@@ -115,9 +130,37 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   isActive,
   panelVisible,
   onExit,
+  launchMode = 'shell',
+  claudeCliModel,
+  focusNonce,
 }) => {
   // Support legacy sessionId prop name
   const sessionId = terminalId;
+
+  // Launch the configured backend (shell PTY or the genuine claude CLI). Both
+  // return the same { success, alreadyActive? } shape so callers branch identically.
+  const initBackend = useCallback(
+    (dims?: { cols?: number; rows?: number }) => {
+      if (launchMode === 'claude-cli') {
+        return window.electronAPI.terminal.ensureClaudeCliSession({
+          sessionId: terminalId,
+          workspacePath,
+          cwd: workspacePath,
+          model: claudeCliModel,
+          cols: dims?.cols,
+          rows: dims?.rows,
+        });
+      }
+      return window.electronAPI.terminal.initialize(terminalId, {
+        workspacePath,
+        cwd: workspacePath,
+        cols: dims?.cols,
+        rows: dims?.rows,
+      });
+    },
+    [launchMode, claudeCliModel, terminalId, workspacePath]
+  );
+
   const terminalRef = useRef<HTMLDivElement>(null);
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -177,10 +220,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     setRestoreWarning(null);
 
     try {
-      await window.electronAPI.terminal.initialize(terminalId, {
-        workspacePath,
-        cwd: workspacePath,
-      });
+      await initBackend();
     } catch (error) {
       console.error('[TerminalPanel] Failed to restart terminal:', error);
       setInitError(error instanceof Error ? error.message : 'Failed to restart terminal');
@@ -230,6 +270,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
     let unsubscribeExited: (() => void) | null = null;
     let inputDisposable: { dispose: () => void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    let resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
     let focusInHandler: (() => void) | null = null;
     let focusOutHandler: (() => void) | null = null;
     let renderStatePersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -310,10 +351,8 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             console.warn('[TerminalPanel] Initial fit failed:', e);
           }
 
-          // Initialize PTY if not already active (with timeout) after we know real dimensions.
-          const initPromise = window.electronAPI.terminal.initialize(terminalId, {
-            workspacePath,
-            cwd: workspacePath,
+          // Initialize the backend (shell or claude CLI) after we know real dimensions.
+          const initPromise = initBackend({
             cols: initialDims?.cols,
             rows: initialDims?.rows,
           });
@@ -539,20 +578,33 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
             }
           });
 
-          // Handle resize
-          resizeObserver = new ResizeObserver(() => {
-            if (fitAddon && !disposed) {
-              try {
-                fitAddon.fit();
-                const dims = fitAddon.proposeDimensions();
-                if (dims && dims.cols > 0 && dims.rows > 0) {
-                  window.electronAPI.terminal.resize(sessionId, dims.cols, dims.rows);
-                  scheduleRenderStatePersist();
-                }
-              } catch (e) {
-                // Ignore resize errors during cleanup
+          // Handle resize. The ResizeObserver fires in a rapid burst while the
+          // collapsible "Raw terminal" drawer animates (and during panel drags /
+          // window resizes). Each fit()+resize() sends a SIGWINCH to the PTY, and
+          // an interactive TUI like the genuine `claude` CLI does a full reflow +
+          // redraw on every one — mid-reflow corruption is what mangles spacing in
+          // the raw terminal. Debounce so a burst collapses into a single resize
+          // once the dimensions settle.
+          const applyResize = () => {
+            if (!fitAddon || disposed) return;
+            try {
+              fitAddon.fit();
+              const dims = fitAddon.proposeDimensions();
+              if (dims && dims.cols > 0 && dims.rows > 0) {
+                window.electronAPI.terminal.resize(sessionId, dims.cols, dims.rows);
+                scheduleRenderStatePersist();
               }
+            } catch (e) {
+              // Ignore resize errors during cleanup
             }
+          };
+          resizeObserver = new ResizeObserver(() => {
+            if (disposed) return;
+            if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+            resizeDebounceTimer = setTimeout(() => {
+              resizeDebounceTimer = null;
+              applyResize();
+            }, 120);
           });
           resizeObserver.observe(terminalRef.current);
 
@@ -607,6 +659,10 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       disposedRef.current = true;
       hasInitializedRef.current = false;
       resizeObserver?.disconnect();
+      if (resizeDebounceTimer) {
+        clearTimeout(resizeDebounceTimer);
+        resizeDebounceTimer = null;
+      }
       if (focusInHandler && terminalRef.current) {
         terminalRef.current.removeEventListener('focusin', focusInHandler);
       }
@@ -644,6 +700,19 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
       terminalInstanceRef.current.blur();
     }
   }, [isActive, panelVisible]);
+
+  // Imperative focus pulse (NIM-810): the reveal listener bumps `focusNonce` when
+  // the CLI opens a native picker so keyboard nav reaches it. Skip the initial
+  // mount (nonce 0) so we only act on real reveals; delay slightly so the drawer
+  // has flipped to display:flex before we focus.
+  const prevFocusNonceRef = useRef<number | undefined>(focusNonce);
+  useEffect(() => {
+    if (focusNonce === undefined) return;
+    if (prevFocusNonceRef.current === focusNonce) return;
+    prevFocusNonceRef.current = focusNonce;
+    const t = setTimeout(() => terminalInstanceRef.current?.focus(), 60);
+    return () => clearTimeout(t);
+  }, [focusNonce]);
 
   // Re-fit when becoming active or panel becomes visible (size may have changed while hidden)
   useEffect(() => {

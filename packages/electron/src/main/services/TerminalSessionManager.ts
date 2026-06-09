@@ -39,6 +39,14 @@ import { promises as fs, existsSync } from 'fs';
 import os from 'os';
 import { ShellDetector, type ShellInfo } from './ShellDetector';
 import { getEnhancedPath } from './CLIManager';
+import type { ClaudeCliSpawnConfig } from './ai/claudeCliSpawnConfig';
+import {
+  watchClaudePidState,
+  type ClaudeTurnState,
+  type ParsedClaudePidFile,
+} from './ai/claudeCliPidState';
+import { detectCliPickerInChunk } from './ai/claudeCliInteractiveCommands';
+import { broadcastClaudeCliRevealTerminal } from './ai/claudeCliRevealTerminal';
 import {
   getTerminalInstance,
   updateTerminalInstance,
@@ -114,6 +122,11 @@ export interface TerminalProcess {
   isCommandRunning?: boolean;
   /** Monotonic sequence number for PTY output ordering */
   outputSequence: number;
+  /**
+   * Optional teardown invoked when the PTY exits (e.g. the Claude CLI PID-state
+   * watcher). Shell terminals leave this unset.
+   */
+  cleanup?: (exitCode: number) => void;
 }
 
 export interface TerminalRestoreSnapshot {
@@ -838,6 +851,22 @@ export class TerminalSessionManager {
       outputSequence: 0,
     };
 
+    await this.registerTerminalProcess(terminalId, terminalProcess);
+  }
+
+  /**
+   * Wire a freshly-spawned PTY-backed terminal into the manager: stream output
+   * to windows, track CWD / command-running state via OSC sequences, persist
+   * scrollback, and handle exit. Shared by the shell terminal (createTerminal)
+   * and the genuine `claude` CLI terminal (createClaudeCliTerminal); the
+   * behavior for shell terminals must remain identical to before the extraction.
+   */
+  private async registerTerminalProcess(
+    terminalId: string,
+    terminalProcess: TerminalProcess
+  ): Promise<void> {
+    const ptyProcess = terminalProcess.pty;
+
     // Handle output from PTY
     ptyProcess.onData((data: string) => {
       terminalProcess.outputSequence += 1;
@@ -882,6 +911,13 @@ export class TerminalSessionManager {
     ptyProcess.onExit(async ({ exitCode }) => {
       console.log(`[TerminalSessionManager] Terminal ${terminalId} exited with code ${exitCode}`);
 
+      // Run any per-terminal teardown (e.g. Claude CLI PID-state watcher).
+      try {
+        terminalProcess.cleanup?.(exitCode);
+      } catch (error) {
+        console.warn(`[TerminalSessionManager] cleanup failed for ${terminalId}:`, error);
+      }
+
       this.clearScrollbackTimer(terminalId);
       await this.persistScrollback(terminalId, { force: true });
 
@@ -899,6 +935,129 @@ export class TerminalSessionManager {
     await this.persistTerminalState(terminalId, terminalProcess, { force: true });
 
     this.terminals.set(terminalId, terminalProcess);
+  }
+
+  /**
+   * Spawn the genuine `claude` CLI (NIM-806, Phase 1) as a PTY-backed terminal,
+   * reusing the exact same output / persist / exit wiring as a shell terminal.
+   *
+   * Unlike a shell terminal, there is NO shell bootstrap, history-file
+   * injection, or OSC rc-file: the CLI owns its own interactive TUI. The
+   * `{ executable, args, env }` is built upstream by `buildClaudeCliSpawnConfig`
+   * (which already strips ANTHROPIC_API_KEY and wires the observation `extraEnv`);
+   * this method only spawns and wires.
+   *
+   * @param terminalId Nimbalyst session id (allocated BEFORE launch so the
+   *   sessionId-bearing MCP config reaches the CLI — see ClaudeCliSessionLauncher).
+   */
+  async createClaudeCliTerminal(
+    terminalId: string,
+    options: {
+      cwd: string;
+      spawnConfig: ClaudeCliSpawnConfig;
+      workspacePath?: string;
+      cols?: number;
+      rows?: number;
+      /**
+       * Turn-state callback driven by the CLI's `~/.claude/sessions/{pid}.json`
+       * file (busy→running, idle→idle, waiting→waiting_for_input). Wired by the
+       * launcher to `SessionStateManager`. The watcher is torn down on exit.
+       */
+      onTurnState?: (state: ClaudeTurnState, parsed: ParsedClaudePidFile) => void;
+      /**
+       * Extra teardown to run when the PTY exits — e.g. stopping the per-session
+       * proxy observation backend (NIM-806, Phase 3). Composed with the
+       * PID-watcher cleanup into the single `cleanup` hook.
+       */
+      onExit?: (exitCode: number) => void;
+    }
+  ): Promise<void> {
+    if (this.terminals.has(terminalId)) {
+      console.log(`[TerminalSessionManager] Claude CLI terminal ${terminalId} already exists`);
+      return;
+    }
+
+    const { spawnConfig } = options;
+    // A stale cwd (e.g. deleted worktree) makes posix_spawnp fail before exec.
+    const cwd = existsSync(options.cwd) ? options.cwd : (options.workspacePath || os.homedir());
+    const cols = options.cols || 80;
+    const rows = options.rows || 30;
+
+    // Synthetic ShellInfo so the shared TerminalProcess shape is satisfied; the
+    // CLI is not a shell, so there is no bootstrapMode / history handling.
+    const shell: ShellInfo = {
+      path: spawnConfig.executable,
+      name: 'claude',
+      args: spawnConfig.args,
+      provider: 'claude-code-cli',
+    };
+
+    console.log(`[TerminalSessionManager] Creating Claude CLI terminal ${terminalId}:`, {
+      executable: spawnConfig.executable,
+      args: JSON.stringify(spawnConfig.args),
+      cwd,
+    });
+
+    const ptyProcess = pty.spawn(spawnConfig.executable, spawnConfig.args, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd,
+      env: spawnConfig.env as NodeJS.ProcessEnv,
+    });
+
+    // NIM-810 (secondary detection): sniff the raw PTY stream for a native picker
+    // rendering and ask the renderer to reveal the drawer. Best-effort net behind
+    // input-side detection — catches model-initiated / directly-typed pickers.
+    // Throttled because a picker redraws on every keypress; reveal is idempotent.
+    let lastPickerRevealAt = 0;
+    ptyProcess.onData((data: string) => {
+      if (!detectCliPickerInChunk(data)) return;
+      const now = Date.now();
+      if (now - lastPickerRevealAt < 1500) return;
+      lastPickerRevealAt = now;
+      broadcastClaudeCliRevealTerminal({ sessionId: terminalId, interactive: true, source: 'output' });
+    });
+
+    const terminalProcess: TerminalProcess = {
+      pty: ptyProcess,
+      sessionId: terminalId,
+      scrollbackBuffer: '',
+      cwd,
+      shell,
+      cols,
+      rows,
+      historyFile: '',
+      metadata: {},
+      cursorX: 0,
+      cursorY: 0,
+      isPersisting: false,
+      hasPendingPersist: false,
+      pendingForcePersist: false,
+      workspacePath: options.workspacePath,
+      outputSequence: 0,
+    };
+
+    // Drive turn-level state off the CLI's PID file. node-pty's `pid` is the
+    // spawned `claude` process, which is the pid the CLI writes its state file
+    // under (`~/.claude/sessions/{pid}.json`). Torn down on exit via `cleanup`.
+    let stopPidWatcher: (() => void) | undefined;
+    if (options.onTurnState && typeof ptyProcess.pid === 'number') {
+      stopPidWatcher = watchClaudePidState({
+        pid: ptyProcess.pid,
+        onTurnState: options.onTurnState,
+      });
+    }
+    // Compose the PID-watcher teardown with any caller teardown (proxy stop).
+    const onExit = options.onExit;
+    if (stopPidWatcher || onExit) {
+      terminalProcess.cleanup = (exitCode: number) => {
+        stopPidWatcher?.();
+        onExit?.(exitCode);
+      };
+    }
+
+    await this.registerTerminalProcess(terminalId, terminalProcess);
   }
 
   /**

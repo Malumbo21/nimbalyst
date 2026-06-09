@@ -5,6 +5,7 @@
 import { AIProvider } from './AIProvider';
 import { ClaudeProvider } from './providers/ClaudeProvider';
 import { ClaudeCodeProvider } from './providers/ClaudeCodeProvider';
+import { ClaudeCodeCliProvider } from './providers/ClaudeCodeCliProvider';
 import { OpenAIProvider } from './providers/OpenAIProvider';
 import { OpenAICodexProvider } from './providers/OpenAICodexProvider';
 import { OpenAICodexACPProvider } from './providers/OpenAICodexACPProvider';
@@ -56,6 +57,10 @@ export class ProviderFactory {
       case 'claude-code':
         // Use SDK version with dynamic loading
         provider = new ClaudeCodeProvider();
+        break;
+      case 'claude-code-cli':
+        // Genuine `claude` CLI on the user's subscription (no API metering).
+        provider = new ClaudeCodeCliProvider();
         break;
       case 'openai':
         provider = new OpenAIProvider();

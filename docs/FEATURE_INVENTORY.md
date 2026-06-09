@@ -298,6 +298,8 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Command running indicator per tab
 - Worktree-specific terminal sessions
 - Context menu (clear, rename)
+- Claude Code CLI sessions: raw-terminal drawer auto-reveals and focuses when the genuine CLI opens a native picker (`/model`, `/config`, `/login`, …)
+- Claude Code CLI sessions: raw-terminal drawer is vertically resizable and remembers its height and collapsed state per session
 
 ## Settings
 

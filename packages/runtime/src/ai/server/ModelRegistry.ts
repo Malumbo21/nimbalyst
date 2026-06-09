@@ -48,6 +48,10 @@ export class ModelRegistry {
           models = await ClaudeCodeProvider.getModels();
           // console.log('[ModelRegistry] Claude Code models retrieved:', models.map(m => ({ id: m.id, name: m.name })));
           break;
+        case 'claude-code-cli':
+          const { ClaudeCodeCliProvider } = await import('./providers/ClaudeCodeCliProvider');
+          models = await ClaudeCodeCliProvider.getModels();
+          break;
         case 'openai':
           const { OpenAIProvider } = await import('./providers/OpenAIProvider');
           models = await OpenAIProvider.getModels(apiKey);
@@ -106,6 +110,7 @@ export class ModelRegistry {
 
     if (shouldFetch('claude')) promises.push(this.getModelsForProvider('claude', apiKeys['anthropic']));
     if (shouldFetch('claude-code')) promises.push(this.getModelsForProvider('claude-code'));
+    if (shouldFetch('claude-code-cli')) promises.push(this.getModelsForProvider('claude-code-cli'));
     if (shouldFetch('openai')) promises.push(this.getModelsForProvider('openai', apiKeys['openai']));
     if (shouldFetch('openai-codex')) promises.push(this.getModelsForProvider('openai-codex', apiKeys['openai']));
     if (shouldFetch('openai-codex-acp')) promises.push(this.getModelsForProvider('openai-codex-acp', apiKeys['openai']));
@@ -138,6 +143,9 @@ export class ModelRegistry {
       case 'claude-code':
         const { ClaudeCodeProvider } = await import('./providers/ClaudeCodeProvider');
         return ClaudeCodeProvider.getDefaultModel();
+      case 'claude-code-cli':
+        const { ClaudeCodeCliProvider } = await import('./providers/ClaudeCodeCliProvider');
+        return ClaudeCodeCliProvider.getDefaultModel();
       case 'openai-codex':
         const { OpenAICodexProvider } = await import('./providers/OpenAICodexProvider');
         return OpenAICodexProvider.getDefaultModel();

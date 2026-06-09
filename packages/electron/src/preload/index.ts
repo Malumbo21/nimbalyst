@@ -488,7 +488,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // AI operations (new unified interface)
   aiHasApiKey: () => ipcRenderer.invoke('ai:hasApiKey'),
   aiInitialize: (provider?: string, apiKey?: string) => ipcRenderer.invoke('ai:initialize', provider, apiKey),
-  aiCreateSession: (provider: 'claude' | 'claude-code' | 'openai' | 'openai-codex' | 'opencode' | 'copilot-cli' | 'lmstudio', documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) => {
+  aiCreateSession: (provider: 'claude' | 'claude-code' | 'claude-code-cli' | 'openai' | 'openai-codex' | 'opencode' | 'copilot-cli' | 'lmstudio', documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) => {
     // console.log('[Preload] aiCreateSession called:', { provider, workspacePath, sessionType, worktreeId });
     return ipcRenderer.invoke('ai:createSession', provider, documentContext, workspacePath, modelId, sessionType, worktreeId);
   },
@@ -662,7 +662,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ai: {
     hasApiKey: () => ipcRenderer.invoke('ai:hasApiKey'),
     initialize: (provider?: string, apiKey?: string) => ipcRenderer.invoke('ai:initialize', provider, apiKey),
-    createSession: (provider: 'claude' | 'claude-code' | 'openai' | 'openai-codex' | 'lmstudio', documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) =>
+    createSession: (provider: 'claude' | 'claude-code' | 'claude-code-cli' | 'openai' | 'openai-codex' | 'lmstudio', documentContext?: any, workspacePath?: string, modelId?: string, sessionType?: string, worktreeId?: string) =>
       ipcRenderer.invoke('ai:createSession', provider, documentContext, workspacePath, modelId, sessionType, worktreeId),
     sendMessage: (message: string, documentContext?: any, sessionId?: string, workspacePath?: string) =>
       ipcRenderer.invoke('ai:sendMessage', message, documentContext, sessionId, workspacePath),
@@ -1612,6 +1612,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // PTY operations
     initialize: (terminalId: string, options: { workspacePath: string; cwd?: string; cols?: number; rows?: number }) =>
       ipcRenderer.invoke('terminal:initialize', terminalId, options),
+    // Launch the genuine `claude` CLI for a claude-code-cli session (NIM-806).
+    // terminalId IS the Nimbalyst session id; idempotent.
+    ensureClaudeCliSession: (payload: {
+      sessionId: string;
+      workspacePath: string;
+      cwd?: string;
+      model?: string;
+      resumeSessionId?: string;
+      cols?: number;
+      rows?: number;
+    }) => ipcRenderer.invoke('claude-cli:ensure-session', payload),
+    // Submit a claude-code-cli prompt (NIM-806) — composes the PTY line (prompt +
+    // inline attachment paths), writes it to the terminal, and logs the clean
+    // typed prompt (+ attachment chips) as the transcript user row in the main
+    // process. Replaces the prior log-only `logClaudeCliUserPrompt`.
+    submitClaudeCliPrompt: (payload: {
+      sessionId: string;
+      workspacePath: string;
+      prompt: string;
+      attachments?: unknown[];
+    }) => ipcRenderer.invoke('claude-cli:submit-prompt', payload),
     isActive: (terminalId: string) =>
       ipcRenderer.invoke('terminal:is-active', terminalId),
     write: (terminalId: string, data: string) =>

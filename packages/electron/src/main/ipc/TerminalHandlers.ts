@@ -6,6 +6,9 @@
  */
 
 import { getTerminalSessionManager } from '../services/TerminalSessionManager';
+import { ensureClaudeCliSession } from '../services/ai/claudeCliLauncherSingleton';
+import { submitClaudeCliPromptProduction } from '../services/ai/claudeCliSubmitSingleton';
+import type { ChatAttachment } from '@nimbalyst/runtime/ai/server/types';
 import { ShellDetector } from '../services/ShellDetector';
 import { safeHandle } from '../utils/ipcRegistry';
 import { ulid } from 'ulid';
@@ -264,6 +267,75 @@ export function registerTerminalHandlers(): void {
   safeHandle('terminal:is-active', async (_event, sessionId: string) => {
     return manager.isTerminalActive(sessionId);
   });
+
+  /**
+   * Ensure the genuine `claude` CLI is running for a `claude-code-cli` session
+   * (NIM-806, Phase 1). Idempotent: the renderer calls this when the session
+   * view mounts; the terminalId IS the Nimbalyst session id, so the same
+   * sessionId-bearing MCP config reaches the CLI. Returns the same
+   * `{ success, alreadyActive? }` shape as `terminal:initialize` so TerminalPanel
+   * can branch on it identically.
+   */
+  safeHandle(
+    'claude-cli:ensure-session',
+    async (
+      _event,
+      payload: {
+        sessionId: string;
+        workspacePath: string;
+        cwd?: string;
+        model?: string;
+        resumeSessionId?: string;
+        cols?: number;
+        rows?: number;
+      }
+    ) => {
+      if (!payload?.sessionId || typeof payload.sessionId !== 'string') {
+        throw new Error('sessionId is required and must be a string');
+      }
+      if (!payload?.workspacePath || typeof payload.workspacePath !== 'string') {
+        throw new Error('workspacePath is required and must be a string');
+      }
+      return ensureClaudeCliSession(payload);
+    }
+  );
+
+  /**
+   * Submit a claude-code-cli prompt (NIM-806 — input integration). The genuine
+   * CLI is driven by its PTY, so this composes the PTY line (prompt + inline
+   * attachment paths), writes it to the terminal, persists the CLEAN typed prompt
+   * (+ attachment chips) as the transcript user row, and fires `ai_message_sent`.
+   * Replaces the prior `claude-cli:log-user-prompt` (which only logged) so the
+   * write + log + analytics live in one place shared with the queue flusher.
+   */
+  safeHandle(
+    'claude-cli:submit-prompt',
+    async (
+      _event,
+      payload: {
+        sessionId: string;
+        workspacePath: string;
+        prompt: string;
+        attachments?: ChatAttachment[];
+      }
+    ) => {
+      if (!payload?.sessionId || typeof payload.sessionId !== 'string') {
+        throw new Error('sessionId is required and must be a string');
+      }
+      if (!payload?.workspacePath || typeof payload.workspacePath !== 'string') {
+        throw new Error('workspacePath is required and must be a string');
+      }
+      const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
+      const attachments = Array.isArray(payload.attachments) ? payload.attachments : undefined;
+      await submitClaudeCliPromptProduction({
+        sessionId: payload.sessionId,
+        workspacePath: payload.workspacePath,
+        prompt,
+        attachments,
+      });
+      return { success: true };
+    }
+  );
 
   /**
    * Write data to a terminal (user input)

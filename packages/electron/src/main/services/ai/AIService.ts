@@ -41,6 +41,7 @@ import {
 import { ToolExecutor, toolRegistry, BUILT_IN_TOOLS } from './tools';
 import { initMobileSessionControlHandler } from './MobileSessionControlHandler';
 import { SoundNotificationService } from '../SoundNotificationService';
+import { getTerminalSessionManager } from '../TerminalSessionManager';
 import { notificationService } from '../NotificationService';
 import { TrayManager } from '../../tray/TrayManager';
 import { logger } from '../../utils/logger';
@@ -74,6 +75,7 @@ import { getMessageSyncHandler, getSyncProvider, isDesktopTrulyAway } from '../S
 import { normalizeCodexProviderConfig, omitModelsField, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { isFileInWorkspaceOrWorktree, resolveProjectPath } from '../../utils/workspaceDetection';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
+import { buildToolPermissionResponseRecord } from './claudeCliToolPermission';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -1573,6 +1575,9 @@ export class AIService {
           // Claude Code: API key is optional, uses SSO login if not provided
           // No error if missing - will use SSO login
           break;
+        case 'claude-code-cli':
+          // Genuine `claude` CLI: uses its own login/subscription, no API key.
+          break;
         case 'openai':
           if (!apiKey) {
             throw new Error('OpenAI API key not configured');
@@ -2183,13 +2188,19 @@ export class AIService {
         return { success: false, error: 'Session not found' };
       }
 
+      // External/agentless providers (e.g. claude-code-cli) have NO in-process
+      // provider instance holding the pending question — the MCP server handler is
+      // blocked on the IPC response channel instead (see interactiveToolHandlers
+      // handleAskUserQuestion). So a missing provider is NOT fatal: skip the
+      // provider-level resolve and fall through to the MCP-channel emit / DB
+      // fallback / auto-resume below. (Previously this returned early, so a CLI
+      // session's answered widget never reached the waiting MCP handler — NIM-806.)
       const provider = ProviderFactory.getProvider(session.provider as AIProviderType, resolvedSessionId);
       if (!provider) {
-        logger.main.warn(`[AIService] Provider not found for AskUserQuestion: ${resolvedSessionId}`);
-        return { success: false, error: 'Provider not found' };
+        logger.main.info(`[AIService] No in-process provider for AskUserQuestion (${session.provider}); routing via MCP/IPC channel: ${resolvedSessionId}`);
       }
 
-      const providerResolved = isAskUserQuestionProvider(provider)
+      const providerResolved = provider && isAskUserQuestionProvider(provider)
         ? provider.resolveAskUserQuestion(questionId, answers, resolvedSessionId, 'desktop')
         : false;
 
@@ -2308,13 +2319,14 @@ export class AIService {
         return { success: false, error: 'Session not found' };
       }
 
+      // Missing provider is non-fatal here too (claude-code-cli has no in-process
+      // instance) — fall through to the MCP/IPC cancel emit + DB fallback. NIM-806.
       const provider = ProviderFactory.getProvider(session.provider as AIProviderType, resolvedSessionId);
       if (!provider) {
-        logger.main.warn(`[AIService] Provider not found for AskUserQuestion cancel: ${resolvedSessionId}`);
-        return { success: false, error: 'Provider not found' };
+        logger.main.info(`[AIService] No in-process provider for AskUserQuestion cancel (${session.provider}); routing via MCP/IPC channel: ${resolvedSessionId}`);
       }
 
-      const providerSupportsCancel = typeof (provider as any).rejectAskUserQuestion === 'function';
+      const providerSupportsCancel = !!provider && typeof (provider as any).rejectAskUserQuestion === 'function';
       if (providerSupportsCancel) {
         (provider as any).rejectAskUserQuestion(questionId, new Error('User cancelled'));
       }
@@ -2374,7 +2386,7 @@ export class AIService {
       // interrupt the in-flight MCP request before the cancellation result is delivered.
       if (!hasMcpWaiter && !hasSessionFallbackWaiter) {
         // Provider-backed AskUserQuestion path (Claude Code): abort active turn.
-        provider.abort();
+        provider?.abort();
       }
 
       return { success: true };
@@ -2389,7 +2401,7 @@ export class AIService {
     }: {
       requestId: string;
       sessionId: string;
-      response: { decision: 'allow' | 'deny'; scope: 'once' | 'session' | 'always' }
+      response: { decision: 'allow' | 'deny'; scope: 'once' | 'session' | 'always' | 'always-all' }
     }) => {
       logger.main.info(`[AIService] Tool permission response received: requestId=${requestId}, decision=${response.decision}, scope=${response.scope}`);
 
@@ -2407,21 +2419,48 @@ export class AIService {
         return { success: false, error: 'Session not found' };
       }
 
+      // SDK path (ClaudeCodeProvider) resolves via the in-process provider.
       const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
-      if (!provider) {
-        logger.main.warn(`[AIService] Provider not found for tool permission: ${sessionId}`);
-        return { success: false, error: 'Provider not found' };
-      }
-
-      // Check if this is a ClaudeCodeProvider with the resolve method
-      if (typeof (provider as any).resolveToolPermission === 'function') {
-        // Pass sessionId for response message persistence
+      if (provider && typeof (provider as any).resolveToolPermission === 'function') {
         (provider as any).resolveToolPermission(requestId, response, sessionId, 'desktop');
         return { success: true };
-      } else {
-        logger.main.warn(`[AIService] Provider does not support tool permission: ${session.provider}`);
-        return { success: false, error: 'Provider does not support tool permission' };
       }
+
+      // External/agentless providers (e.g. claude-code-cli) have NO in-process
+      // provider holding the pending permission — the MCP handler
+      // (handleToolPermission) is blocked on the per-request IPC channel instead.
+      // So a missing/unsupported provider is NOT fatal: emit on that channel so
+      // the waiting MCP handler resolves and returns the decision to the CLI.
+      // (Mirrors the AskUserQuestion CLI fix — NIM-806.)
+      const { AgentMessagesRepository } = await import('@nimbalyst/runtime/storage/repositories/AgentMessagesRepository');
+      await AgentMessagesRepository.create({
+        sessionId,
+        source: 'nimbalyst',
+        direction: 'output',
+        createdAt: new Date(),
+        content: JSON.stringify(buildToolPermissionResponseRecord({
+          requestId,
+          answer: response,
+          respondedBy: 'desktop',
+        })),
+      });
+
+      const mcpPermissionChannel = `tool-permission-response:${sessionId}:${requestId}`;
+      const hasMcpWaiter = ipcMain.listenerCount(mcpPermissionChannel) > 0;
+      if (hasMcpWaiter) {
+        logger.main.info(`[AIService] Tool permission emitting on MCP channel: ${mcpPermissionChannel}`);
+        ipcMain.emit(mcpPermissionChannel, event, {
+          requestId,
+          sessionId,
+          decision: response.decision,
+          scope: response.scope,
+          respondedBy: 'desktop',
+        });
+        return { success: true };
+      }
+
+      logger.main.info(`[AIService] Tool permission response persisted without live MCP waiter: ${session.provider} (${sessionId})`);
+      return { success: true };
     });
 
     // Handle tool permission cancel from renderer
@@ -2449,22 +2488,33 @@ export class AIService {
         return { success: false, error: 'Session not found' };
       }
 
+      // SDK path: reject via the in-process provider and abort the turn.
       const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
-      if (!provider) {
-        logger.main.warn(`[AIService] Provider not found for tool permission cancel: ${sessionId}`);
-        return { success: false, error: 'Provider not found' };
-      }
-
-      // Check if this is a ClaudeCodeProvider with the reject method
-      if (typeof (provider as any).rejectToolPermission === 'function') {
+      if (provider && typeof (provider as any).rejectToolPermission === 'function') {
         (provider as any).rejectToolPermission(requestId, new Error('User cancelled'));
-        // Also abort the provider to stop the AI request
         provider.abort();
         return { success: true };
-      } else {
-        logger.main.warn(`[AIService] Provider does not support tool permission cancel: ${session.provider}`);
-        return { success: false, error: 'Provider does not support tool permission cancel' };
       }
+
+      // External CLI: no provider to reject. Settle the blocked MCP handler with a
+      // cancelled deny so it returns {behavior:'deny'} to the CLI (NIM-806).
+      const mcpPermissionChannel = `tool-permission-response:${sessionId}:${requestId}`;
+      const hasMcpWaiter = ipcMain.listenerCount(mcpPermissionChannel) > 0;
+      if (hasMcpWaiter) {
+        logger.main.info(`[AIService] Tool permission cancel emitting on MCP channel: ${mcpPermissionChannel}`);
+        ipcMain.emit(mcpPermissionChannel, event, {
+          requestId,
+          sessionId,
+          decision: 'deny',
+          scope: 'once',
+          cancelled: true,
+          respondedBy: 'desktop',
+        });
+        return { success: true };
+      }
+
+      logger.main.warn(`[AIService] No provider or MCP waiter for tool permission cancel: ${session.provider} (${sessionId})`);
+      return { success: false, error: 'No handler for tool permission cancel' };
     });
 
     // Cancel current request
@@ -2482,6 +2532,23 @@ export class AIService {
       if (!session) {
         console.warn(`[AIService] Cancel failed - session not found: ${sessionId}`);
         return { success: false, error: 'Session not found' };
+      }
+
+      if (session.provider === 'claude-code-cli') {
+        const terminalManager = getTerminalSessionManager();
+        if (!terminalManager.isTerminalActive(sessionId)) {
+          console.warn(`[AIService] Cancel failed - no active claude-code-cli terminal for session: ${sessionId}`);
+          return { success: false, error: 'No active terminal for session' };
+        }
+
+        terminalManager.writeToTerminal(sessionId, '\x03');
+        this.analytics.sendEvent('ai_stream_interrupted', {
+          provider: 'claude-code-cli',
+          chunksReceived: chunksReceived || 0,
+          reason: 'user_cancel'
+        });
+        this.analytics.sendEvent('cancel_ai_request', { provider: 'claude-code-cli' });
+        return { success: true };
       }
 
       // console.log(`[AIService] Session found, provider type: ${session.provider}`);
@@ -2549,6 +2616,17 @@ export class AIService {
       const session = await AISessionsRepository.get(sessionId);
       if (!session) {
         return { success: false, error: 'Session not found' };
+      }
+
+      if (session.provider === 'claude-code-cli') {
+        const terminalManager = getTerminalSessionManager();
+        if (!terminalManager.isTerminalActive(sessionId)) {
+          return { success: false, error: 'No active terminal for session' };
+        }
+
+        terminalManager.writeToTerminal(sessionId, '\x03');
+        logger.main.info(`[AIService] Interrupted claude-code-cli terminal for session ${sessionId}`);
+        return { success: true, method: 'terminal-ctrl-c' };
       }
 
       const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
@@ -3088,6 +3166,12 @@ export class AIService {
           // Respect the user's toggle but don't require an API key—Claude Code uses CLI auth
           enabled: claudeCodeSettings.enabled !== false,
           models: claudeCodeSettings.models
+        },
+        'claude-code-cli': {
+          // Genuine `claude` CLI on the user's subscription. On by default (like
+          // `claude-code`); no API key required — the CLI uses its own login.
+          enabled: providerSettings['claude-code-cli']?.enabled !== false,
+          models: providerSettings['claude-code-cli']?.models
         },
         'openai': {
           enabled: providerSettings['openai']?.enabled === true && !!apiKeys['openai'],

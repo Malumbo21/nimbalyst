@@ -10,7 +10,7 @@
  * - Combined format is always "provider:model"
  */
 
-import { AIProviderType, AI_PROVIDER_TYPES } from './types';
+import { AIProviderType, AI_PROVIDER_TYPES, isClaudeCodeFamily } from './types';
 import {
   CLAUDE_CODE_ACCEPTED_VARIANT_INPUTS,
   DEFAULT_MODELS,
@@ -51,7 +51,7 @@ export class ModelIdentifier {
    * For other providers, returns the model as-is.
    */
   get baseVariant(): string {
-    if (this.provider === 'claude-code') {
+    if (isClaudeCodeFamily(this.provider)) {
       // Strip known suffixes
       let variant = this.model.toLowerCase();
       for (const suffix of CLAUDE_CODE_VALID_SUFFIXES) {
@@ -68,7 +68,7 @@ export class ModelIdentifier {
    * For Claude Code models, returns true if this is a variant with extended context (e.g., -1m)
    */
   get isExtendedContext(): boolean {
-    if (this.provider !== 'claude-code') {
+    if (!isClaudeCodeFamily(this.provider)) {
       return false;
     }
     return this.model.toLowerCase().endsWith('-1m');
@@ -120,7 +120,7 @@ export class ModelIdentifier {
     }
 
     // Validate model for provider
-    if (provider === 'claude-code') {
+    if (isClaudeCodeFamily(provider)) {
       const normalizedModel = model.toLowerCase();
 
       // Strip known suffixes to get base variant

@@ -80,6 +80,7 @@ import { registerExportHandlers } from './ipc/ExportHandlers';
 import { registerShareHandlers } from './ipc/ShareHandlers';
 import { MCPConfigService } from './services/MCPConfigService';
 import { setMcpConfigServiceGetter } from './mcpConfigServiceRef';
+import { ClaudeCliLauncherConfig } from './services/ai/claudeCliLauncherSingleton';
 import { registerDatabaseBrowserHandlers } from './ipc/DatabaseBrowserHandlers';
 import { registerDatabaseBrowserSqliteHandlers } from './ipc/DatabaseBrowserSqliteHandlers';
 import { registerMigrationHandlers } from './ipc/MigrationHandlers';
@@ -1554,6 +1555,29 @@ app.whenReady().then(async () => {
         return enabledServers;
     });
 
+    // Claude CLI (subscription) launcher shares the Claude Agent MCP filter —
+    // the genuine CLI hits the identical MCP handlers as the SDK path (NIM-806).
+    ClaudeCliLauncherConfig.setMcpConfigLoader(async (workspacePath?: string) => {
+        if (!mcpConfigService) {
+            throw new Error('MCP config service not initialized');
+        }
+        const mergedConfig = await mcpConfigService.getMergedConfig(workspacePath);
+        const allServers = mergedConfig.mcpServers || {};
+
+        const enabledServers: Record<string, any> = {};
+        for (const [name, config] of Object.entries(allServers)) {
+            if (isMCPServerEnabledForProvider(config as MCPServerConfig, MCP_PROVIDER_IDS.CLAUDE_AGENT)) {
+                const isAuthorized = await mcpConfigService.isOAuthAuthorized(config as MCPServerConfig);
+                if (!isAuthorized) {
+                    logger.mcp.info(`[MCP] Skipping unauthorized OAuth server for Claude CLI: ${name}`);
+                    continue;
+                }
+                enabledServers[name] = mcpConfigService.processServerConfigForRuntime(config as any);
+            }
+        }
+        return enabledServers;
+    });
+
     // Inject extension plugins loader into ClaudeCodeProvider
     // This allows extensions to provide Claude SDK plugins with custom commands/agents
     // Uses main-process-native implementation that reads extension manifests directly
@@ -1958,6 +1982,7 @@ app.whenReady().then(async () => {
     OpenAICodexACPProvider.setMcpAuthToken(mcpAuthToken);
     OpenCodeProvider.setMcpAuthToken(mcpAuthToken);
     CopilotCLIProvider.setMcpAuthToken(mcpAuthToken);
+    ClaudeCliLauncherConfig.setMcpAuthToken(mcpAuthToken);
 
     // Test-only IPC handler: lets E2E tests verify the bearer token is
     // enforced by the MCP servers. Mirrors the pattern used for
@@ -1987,6 +2012,7 @@ app.whenReady().then(async () => {
         OpenAICodexACPProvider.setMcpServerPort(result.port);
         OpenCodeProvider.setMcpServerPort(result.port);
         CopilotCLIProvider.setMcpServerPort(result.port);
+        ClaudeCliLauncherConfig.setMcpServerPort(result.port);
     } catch (error) {
             logger.mcp.error('Failed to start MCP SSE server:', error);
     }
@@ -2020,6 +2046,7 @@ app.whenReady().then(async () => {
         OpenAICodexACPProvider.setSessionContextServerPort(result.port);
         OpenCodeProvider.setSessionContextServerPort(result.port);
         CopilotCLIProvider.setSessionContextServerPort(result.port);
+        ClaudeCliLauncherConfig.setSessionContextServerPort(result.port);
     } catch (error) {
         logger.mcp.error('Failed to start session context MCP server:', error);
     }
@@ -2034,6 +2061,7 @@ app.whenReady().then(async () => {
         OpenAICodexACPProvider.setSettingsServerPort(result.port);
         OpenCodeProvider.setSettingsServerPort(result.port);
         CopilotCLIProvider.setSettingsServerPort(result.port);
+        ClaudeCliLauncherConfig.setSettingsServerPort(result.port);
 
         // Kill-switch loader: read fresh from the store on every config build
         // so flipping `settingsAgentToolsDisabled` in Settings > Advanced takes
@@ -2044,6 +2072,7 @@ app.whenReady().then(async () => {
         OpenAICodexACPProvider.setSettingsAgentToolsDisabledLoader(killSwitch);
         OpenCodeProvider.setSettingsAgentToolsDisabledLoader(killSwitch);
         CopilotCLIProvider.setSettingsAgentToolsDisabledLoader(killSwitch);
+        ClaudeCliLauncherConfig.setSettingsAgentToolsDisabledLoader(killSwitch);
     } catch (error) {
         logger.mcp.error('Failed to start settings MCP server:', error);
     }

@@ -470,7 +470,7 @@ describe('EditToolResultCard', () => {
   it('renders file path and edit count for single edit', () => {
     const message = makeToolMessage('Edit', {
       file_path: '/workspace/src/app.ts',
-    });
+    }, { success: true }); // tool_result observed -> "Applied" (NIM-806 gating)
     const edits = [{ old_string: 'foo', new_string: 'bar' }];
     render(
       <EditToolResultCard
@@ -489,7 +489,7 @@ describe('EditToolResultCard', () => {
   it('renders "Created" status for new file edits', () => {
     const message = makeToolMessage('Write', {
       file_path: '/workspace/new-file.ts',
-    });
+    }, { success: true }); // tool_result observed -> "Created" (NIM-806 gating)
     const edits = [{ content: 'export const x = 1;\n' }];
     render(
       <EditToolResultCard
@@ -499,6 +499,29 @@ describe('EditToolResultCard', () => {
       />
     );
     expect(screen.getByText('Created')).toBeDefined();
+  });
+
+  it('renders "Pending" status while no tool_result is observed yet (awaiting approval/execution)', () => {
+    // NIM-806: for the genuine claude-code-cli, the proxy emits the Write
+    // tool_use at message_stop — BEFORE the user approves the native/widget
+    // permission prompt and before the file is actually written. The real
+    // tool_result only rides the NEXT request body. So a card with no result
+    // must NOT claim "Created"/"Applied"; it shows a pending state until the
+    // tool_result arrives (or "Failed" if it errors).
+    const message = makeToolMessage('Write', {
+      file_path: '/workspace/new-file.ts',
+    }); // no result -> status 'running', toolCall.result undefined
+    const edits = [{ content: 'export const x = 1;\n' }];
+    render(
+      <EditToolResultCard
+        toolMessage={message}
+        edits={edits}
+        workspacePath="/workspace"
+      />
+    );
+    expect(screen.getByText('Pending')).toBeDefined();
+    expect(screen.queryByText('Created')).toBeNull();
+    expect(screen.queryByText('Applied')).toBeNull();
   });
 
   it('renders "Failed" status for error', () => {

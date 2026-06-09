@@ -34,6 +34,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { BrowserWindow } from 'electron';
 import { type SessionData } from '@nimbalyst/runtime/ai/server/types';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
 import { logger } from '../../utils/logger';
@@ -70,7 +71,10 @@ export class HooklessAgentFileWatcher {
   async ensureForSession(
     sessionId: string,
     workspacePath: string,
-    event: Electron.IpcMainInvokeEvent,
+    // null for the claude-code-cli path, which has no originating IPC invoke
+    // event — the `session-files:updated` ping is broadcast to the workspace
+    // window instead (see the watcher callback below).
+    event: Electron.IpcMainInvokeEvent | null,
   ): Promise<void> {
     // Cancel any pending delayed-stop timer so it doesn't destroy the watcher
     // we're about to reuse (race: new turn starts within the 500ms drain delay).
@@ -131,7 +135,16 @@ export class HooklessAgentFileWatcher {
           timestamp: watchEvent.timestamp,
           beforeContent: watchEvent.beforeContent,
         });
-        safeSend(event, 'session-files:updated', sessionId);
+        if (event) {
+          safeSend(event, 'session-files:updated', sessionId);
+        } else {
+          // CLI path: no originating event — broadcast to all windows (the
+          // renderer listener filters by sessionId). Uses BrowserWindow directly
+          // to avoid pulling the heavy WindowManager module into this file.
+          for (const win of BrowserWindow.getAllWindows()) {
+            if (!win.isDestroyed()) win.webContents.send('session-files:updated', sessionId);
+          }
+        }
       },
     );
     this.watchers.set(sessionId, { cache, watcher, workspacePath });

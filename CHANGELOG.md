@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Run agent sessions on the genuine Claude Code CLI using your Claude Pro/Max subscription (no API metering), with the same live transcript, file tracking, and interactive prompts as the built-in agents — plus a resizable raw-terminal drawer that auto-reveals when the CLI opens a native picker (`/model`, `/login`, …).
 - Import GitHub issues into the tracker as native bug, task, or feature items that link back to the source, with one-click re-snapshot to pull the latest title, status, and body. Uses your installed `gh` login.
 
 ### Changed
