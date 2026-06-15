@@ -902,9 +902,15 @@ export async function handleGitCommitProposal(
     // Persist resolved state + push to mobile
     void setSessionPendingPrompt(targetSessionId, false);
 
-    console.log(
-      `[MCP Server] Auto-commit completed: ${commitResult.commitHash || "no changes"}`
-    );
+    if (commitResult.success) {
+      console.log(
+        `[MCP Server] Auto-commit completed: ${commitResult.commitHash}`
+      );
+    } else {
+      console.warn(
+        `[MCP Server] Auto-commit did not commit: ${commitResult.error || "unknown error"}`
+      );
+    }
 
     if (response.action === "committed" && response.commitHash) {
       // Link commit to tracker items via session (fire-and-forget)

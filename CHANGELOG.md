@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
-<!-- Bug fixes go here -->
+- "Allow All" permission mode again auto-approves every operation without prompts; the Claude Code safety classifier is now an opt-in toggle per project instead of being forced on.
+- Auto-commit now retries with backoff when another git process briefly holds .git/index.lock, so concurrent sessions commit on the first try instead of failing and being misreported as "no changes".
 
 ### Removed
 <!-- Removed features go here -->
