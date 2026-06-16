@@ -13,6 +13,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Each test dynamically imports the large `appSettings` module graph. Under the
+// full 444-file concurrent suite (run via the ROOT vitest config, whose default
+// testTimeout is 5s -- the electron config's 10s does not apply at root), that
+// import can exceed 5s on a busy machine and time out. A timed-out test is also
+// interrupted mid-flow, which can leak a pending debounce timer into the next
+// test's shared `window` mock. Give these heavy async tests real headroom.
+vi.setConfig({ testTimeout: 20000, hookTimeout: 20000 });
+
 describe('settings cross-window lockstep (legacy atoms)', () => {
   let fireBroadcast: (payload: { key: string; value: unknown }) => void;
 

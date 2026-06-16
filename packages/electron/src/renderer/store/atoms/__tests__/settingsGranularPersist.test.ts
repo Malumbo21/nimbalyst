@@ -10,6 +10,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Each test dynamically imports the large `appSettings` module graph. Under the
+// full 444-file concurrent suite (run via the ROOT vitest config, whose default
+// testTimeout is 5s -- the electron config's 10s does not apply at root), that
+// import can exceed 5s on a busy machine and time out. A timed-out test is also
+// interrupted before `flushPendingAIProviderPersist` clears its debounce timer,
+// so that real timer fires into the next test's shared `window.settingsSet`
+// mock (the spurious `ai.provider.openai` write). Real headroom fixes both.
+vi.setConfig({ testTimeout: 20000, hookTimeout: 20000 });
+
 describe('granular AI provider persistence', () => {
   let settingsSet: ReturnType<typeof vi.fn>;
 
