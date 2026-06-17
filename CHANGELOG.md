@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- New features go here -->
 - Shared Docs discovery home: search, favorites, recently opened, and docs new or changed since you last viewed them, with a sidebar filter (All / Favorites / Updated) and controls to hide or clear unread markers.
 - Tools & Token Cost settings panel: see every tool group's estimated context-token cost and load policy in one place, with a link from the AI panel's token meter.
+- iOS: create a Meta Agent on mobile and see it grouped with its sub-agents in a collapsible "Meta Agent" group (alpha-gated to the desktop feature flag).
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Bug fixes go here -->
 - Agent sessions defer MCP tool definitions until used on all models, and multi-worktree projects no longer load duplicate copies of project commands.
 - Background agents launched by a session are no longer killed when the session's turn ends; the session stays alive and wakes when they finish.
+- Sync: meta agents and their spawned sub-agents now group together on mobile in real time instead of only after a full resync.
 
 ### Removed
 <!-- Removed features go here -->

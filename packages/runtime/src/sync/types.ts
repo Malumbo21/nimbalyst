@@ -367,6 +367,10 @@ export interface SessionIndexData {
   parentSessionId?: string;
   /** Worktree ID for git worktree association */
   worktreeId?: string;
+  /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
+  agentRole?: string;
+  /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
+  createdBySessionId?: string | null;
   /** Whether the session is archived */
   isArchived?: boolean;
   /** Whether the session is pinned */
@@ -439,6 +443,10 @@ export interface SyncedSessionMetadata {
   parentSessionId?: string;
   /** Worktree association (mirrored from ai_sessions.worktree_id). */
   worktreeId?: string;
+  /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
+  agentRole?: string;
+  /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
+  createdBySessionId?: string;
   provider?: string;
   model?: string;
   workspaceId?: string;
@@ -497,6 +505,10 @@ export interface SessionIndexEntry {
   parentSessionId?: string;
   /** Worktree ID for git worktree association */
   worktreeId?: string;
+  /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
+  agentRole?: string;
+  /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
+  createdBySessionId?: string;
   /** Whether the session is archived */
   isArchived?: boolean;
   /** Whether the session is pinned */

@@ -19,6 +19,7 @@
 import type { AgentMessage } from '../ai/server/types';
 import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
 import { appendSyncClientParams } from './syncClientInfo';
+import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
 import type {
   SyncConfig,
   SyncStatus,
@@ -150,6 +151,10 @@ interface SessionIndexEntry {
   parentSessionId?: string;
   /** Worktree ID for git worktree association (plaintext UUID) */
   worktreeId?: string;
+  /** Agent role marker (e.g. 'meta-agent', 'standard'). Plaintext - drives mobile meta-agent grouping. */
+  agentRole?: string;
+  /** Meta-agent parent session ID for spawned children (plaintext UUID). Drives mobile meta-agent grouping. */
+  createdBySessionId?: string;
   /** Whether the session is archived */
   isArchived?: boolean;
   /** Whether the session is pinned */
@@ -814,6 +819,10 @@ interface CachedSessionIndex {
   parentSessionId?: string;
   /** Worktree ID for git worktree association */
   worktreeId?: string;
+  /** Agent role marker (e.g. 'meta-agent', 'standard'); drives mobile meta-agent grouping. */
+  agentRole?: string;
+  /** Meta-agent parent session ID for spawned children; drives mobile meta-agent grouping. */
+  createdBySessionId?: string;
   isArchived?: boolean;
   isPinned?: boolean;
   branchedFromSessionId?: string;
@@ -1152,6 +1161,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       sessionType: baseEntry.sessionType,
       parentSessionId: baseEntry.parentSessionId,
       worktreeId: baseEntry.worktreeId,
+      agentRole: baseEntry.agentRole,
+      createdBySessionId: baseEntry.createdBySessionId,
       isArchived: baseEntry.isArchived,
       isPinned: baseEntry.isPinned,
       messageCount: baseEntry.messageCount,
@@ -1233,6 +1244,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       sessionType: 'sessionType' in pending ? pending.sessionType : cached.sessionType,
       parentSessionId: 'parentSessionId' in pending ? pending.parentSessionId : cached.parentSessionId,
       worktreeId: 'worktreeId' in pending ? pending.worktreeId : cached.worktreeId,
+      agentRole: cached.agentRole,
+      createdBySessionId: cached.createdBySessionId,
       isArchived: 'isArchived' in pending ? pending.isArchived : cached.isArchived,
       isPinned: 'isPinned' in pending ? pending.isPinned : cached.isPinned,
       messageCount: cached.messageCount,
@@ -1897,6 +1910,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
                     sessionType: entry.sessionType,
                     parentSessionId: entry.parentSessionId,
                     worktreeId: entry.worktreeId,
+                    agentRole: entry.agentRole,
+                    createdBySessionId: entry.createdBySessionId,
                     isArchived: entry.isArchived,
                     isPinned: entry.isPinned,
                     branchedFromSessionId: entry.branchedFromSessionId,
@@ -1926,6 +1941,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
                     sessionType: decrypted.sessionType,
                     parentSessionId: decrypted.parentSessionId,
                     worktreeId: decrypted.worktreeId,
+                    agentRole: decrypted.agentRole,
+                    createdBySessionId: decrypted.createdBySessionId,
                     isArchived: decrypted.isArchived,
                     isPinned: decrypted.isPinned,
                     branchedFromSessionId: decrypted.branchedFromSessionId,
@@ -2050,6 +2067,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               sessionType: entry.sessionType,
               parentSessionId: entry.parentSessionId,
               worktreeId: entry.worktreeId,
+              // Carry the meta-agent grouping fields off the wire so an
+              // incremental broadcast keeps the local cache groupable (parity
+              // with the indexResponse decrypt path above).
+              agentRole: entry.agentRole,
+              createdBySessionId: entry.createdBySessionId,
               isArchived: entry.isArchived,
               isPinned: entry.isPinned,
               branchedFromSessionId: entry.branchedFromSessionId,
@@ -2700,14 +2722,10 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         provider: session.provider,
         model: session.model,
         mode: session.mode as SessionIndexEntry['mode'],
-        sessionType: session.sessionType,
-        parentSessionId: session.parentSessionId,
-        worktreeId: session.worktreeId,
-        isArchived: session.isArchived,
-        isPinned: session.isPinned,
-        branchedFromSessionId: session.branchedFromSessionId,
-        branchPointMessageId: session.branchPointMessageId,
-        branchedAt: session.branchedAt,
+        // Plaintext relationship/flag fields (incl. agentRole + createdBySessionId
+        // for mobile meta-agent grouping). Single source of truth + regression lock:
+        // sessionIndexEntryFields.ts / __tests__/sessionIndexEntryFields.test.ts.
+        ...buildSyncedSessionIndexFields(session),
         messageCount: session.messageCount,
         lastMessageAt: session.updatedAt,
         createdAt: session.createdAt,
@@ -2766,6 +2784,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         sessionType: session.sessionType,
         parentSessionId: session.parentSessionId,
         worktreeId: session.worktreeId,
+        agentRole: session.agentRole,
+        createdBySessionId: session.createdBySessionId ?? undefined,
         isArchived: session.isArchived,
         isPinned: session.isPinned,
         branchedFromSessionId: session.branchedFromSessionId,
@@ -3187,6 +3207,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               sessionType: 'sessionType' in meta ? (meta as any).sessionType : cached.sessionType,
               parentSessionId: 'parentSessionId' in meta ? meta.parentSessionId : cached.parentSessionId,
               worktreeId: 'worktreeId' in meta ? (meta as any).worktreeId : cached.worktreeId,
+              // Meta-agent grouping fields: apply when the update carries them,
+              // otherwise preserve the cached value (also held by the `...cached`
+              // spread above). createdBySessionId is normalized null -> undefined.
+              agentRole: 'agentRole' in meta ? meta.agentRole : cached.agentRole,
+              createdBySessionId: 'createdBySessionId' in meta ? (meta.createdBySessionId ?? undefined) : cached.createdBySessionId,
               isArchived: 'isArchived' in meta ? meta.isArchived : cached.isArchived,
               isPinned: 'isPinned' in meta ? (meta as any).isPinned : cached.isPinned,
               lastMessageAt: updatedAt ?? cached.lastMessageAt,
@@ -3220,6 +3245,13 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               sessionType: meta.sessionType,
               parentSessionId: meta.parentSessionId,
               worktreeId: (meta as any).worktreeId,
+              // Meta-agent grouping fields (parity with bulk path's
+              // buildSyncedSessionIndexFields + sendIndexUpdate). Without these a
+              // freshly-created meta agent/child reaches the server/phone ungrouped
+              // until the next full bulk resync. createdBySessionId is normalized
+              // null -> undefined to match the helper.
+              agentRole: meta.agentRole,
+              createdBySessionId: meta.createdBySessionId ?? undefined,
               isArchived: meta.isArchived,
               isPinned: (meta as any).isPinned,
               messageCount: 0,
