@@ -2477,8 +2477,10 @@ app.whenReady().then(async () => {
 
     // Save session periodically (every 30 seconds)
     sessionSaveInterval = setInterval(async () => {
-        // Only save if app is not quitting
-        if (!isAppQuitting) {
+        // Only save if app is not quitting or restarting. During a restart the
+        // good state is saved once in `before-quit`; a periodic save firing
+        // afterward (over an emptied windows map) would clobber it (NIM-869).
+        if (!isAppQuitting && !isRestarting()) {
             await saveSessionState();
         }
     }, 30000);
@@ -2572,6 +2574,16 @@ app.on('before-quit', async (event) => {
         console.log('[QUIT] Restart signal detected, saving session state before restart');
         // Mark as restarting BEFORE saving to prevent window close handlers from overwriting
         isAppRestarting = true;
+        // Stop the periodic session-save timer and mark quitting so NO further
+        // save can fire after windows tear down. Without this the periodic save
+        // (guarded only by !isAppQuitting) could run over an emptied windows map
+        // and overwrite the good state with `{ windows: [] }` -- the restart
+        // would then come back to the Workspace Manager with no projects (NIM-869).
+        isAppQuitting = true;
+        if (sessionSaveInterval) {
+            clearInterval(sessionSaveInterval);
+            sessionSaveInterval = null;
+        }
         // Save session state so the session is restored after restart
         try {
             await saveSessionState();
