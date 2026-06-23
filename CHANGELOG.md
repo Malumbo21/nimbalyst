@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 <!-- Removed features go here -->
 
+## [0.66.2] - 2026-06-22
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+- Desktop release builds now bundle the application correctly (0.66.0 and 0.66.1 failed to package).
+
+### Removed
+<!-- Removed features go here -->
+
 ## [0.66.1] - 2026-06-22
 
 
