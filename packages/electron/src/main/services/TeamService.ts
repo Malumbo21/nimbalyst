@@ -76,6 +76,7 @@ import {
   getMemberTrustStatus,
   markMemberVerified,
   fingerprintIdentityKey,
+  fetchTeamKeyStatus,
 } from './OrgKeyService';
 import { performKeyRotation, cleanupOrphanedDocuments, reEncryptTrackerFromLocal } from './KeyRotationService';
 // TrackerSyncManager already imports from this module (findTeamForWorkspace).
@@ -1181,6 +1182,19 @@ function startAutoWrapPolling(orgId: string): void {
       return;
     }
 
+    // Epic H2: stop polling for server-managed teams -- they have no key
+    // envelopes, so autoWrapForNewMembers is a no-op every iteration.
+    try {
+      const orgJwt = await getOrgScopedJwt(orgId);
+      if ((await fetchTeamKeyStatus(orgId, orgJwt)).mode === 'server-managed') {
+        clearInterval(interval);
+        autoWrapIntervals.delete(orgId);
+        return;
+      }
+    } catch {
+      // Could not determine mode -- continue with legacy wrapping below.
+    }
+
     try {
       await autoWrapForNewMembers(orgId);
     } catch (err) {
@@ -1279,6 +1293,18 @@ export async function autoWrapForNewMembers(orgId: string): Promise<void> {
   if (!localFp) return; // No local key at all
 
   const orgJwt = await getOrgScopedJwt(orgId);
+
+  // Epic H2: server-managed teams have no per-member key envelopes -- the server
+  // holds the per-team DEK and sync paths skip the ECDH unwrap entirely. Wrapping
+  // org keys for members is dead work here (and noisily fails with "Public key not
+  // found" for members who never uploaded an identity key). Skip it.
+  try {
+    if ((await fetchTeamKeyStatus(orgId, orgJwt)).mode === 'server-managed') {
+      return;
+    }
+  } catch {
+    // Could not determine custody mode -- fall through to legacy wrapping (safe default).
+  }
 
   try {
     const fpResp = await fetchTeamApi(`/api/teams/${orgId}/org-key-fingerprint`, 'GET', undefined, orgId) as { fingerprint: string | null };
