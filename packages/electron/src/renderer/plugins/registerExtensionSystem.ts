@@ -21,6 +21,10 @@ import {
   setEnsureEditorCallback,
   collectVoiceSessionContext,
 } from '@nimbalyst/runtime';
+import {
+  listRegisteredCollabContentAdapters,
+  onCollabContentAdaptersChange,
+} from '@nimbalyst/collab-adapters';
 import { ExtensionPlatformServiceImpl } from '../services/ExtensionPlatformServiceImpl';
 import { initializeExtensionEditorBridge } from '../extensions/ExtensionEditorBridge';
 import { initializeExtensionPluginBridge } from '../extensions/ExtensionPluginBridge';
@@ -53,6 +57,46 @@ let voiceContextListenerSetup = false;
 
 // Track if renderer eval listener is set up
 let rendererEvalListenerSetup = false;
+
+// Track if collab adapter descriptor forwarding is set up
+let collabAdapterForwardingSetup = false;
+
+/**
+ * Forward serializable collab adapter descriptors to the main process so it can
+ * rebuild the adapter and reach parity (seed/reupload/history) for any installed
+ * extension's document type -- not just the statically-bundled built-ins. Only
+ * adapters that carry a `serializableDescriptor` (text adapters today) are
+ * forwarded. Runs once, then re-forwards on every registry change (late /
+ * hot-reloaded extensions).
+ */
+function setupCollabAdapterForwarding(): void {
+  if (collabAdapterForwardingSetup) return;
+  collabAdapterForwardingSetup = true;
+
+  const documentSync = (window as any).electronAPI?.documentSync;
+  if (!documentSync?.registerCollabAdapterDescriptor) {
+    console.warn('[ExtensionSystem] documentSync.registerCollabAdapterDescriptor unavailable; collab adapters stay renderer-only');
+    return;
+  }
+
+  const forwarded = new Set<string>();
+  const forward = () => {
+    for (const adapter of listRegisteredCollabContentAdapters()) {
+      const descriptor = adapter.serializableDescriptor;
+      if (!descriptor) continue;
+      const key = `${descriptor.documentType}:${descriptor.kind}`;
+      if (forwarded.has(key)) continue;
+      forwarded.add(key);
+      documentSync.registerCollabAdapterDescriptor(descriptor).catch((err: unknown) => {
+        forwarded.delete(key);
+        console.warn('[ExtensionSystem] Failed to forward collab adapter descriptor for', descriptor.documentType, err);
+      });
+    }
+  };
+
+  forward();
+  onCollabContentAdaptersChange(forward);
+}
 
 // Track if extension test listeners are set up
 let extensionTestListenersSetup = false;
@@ -665,6 +709,10 @@ export async function registerExtensionSystem(): Promise<void> {
 
     // Initialize the bridge to register custom editors from extensions
     initializeExtensionEditorBridge();
+
+    // Forward collab adapter descriptors to main so marketplace editors reach
+    // main-process parity (seed/reupload/history), not just bundled built-ins.
+    setupCollabAdapterForwarding();
 
     // Initialize the plugin bridge to register slash commands, nodes, and transformers
     initializeExtensionPluginBridge();

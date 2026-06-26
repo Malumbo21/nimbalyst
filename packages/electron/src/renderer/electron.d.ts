@@ -146,7 +146,12 @@ interface ElectronAPI {
   // Global semantic search (nimbalyst-memory). Empty/false when memory is off.
   semanticSearch: {
     isAvailable: (workspacePath: string) => Promise<boolean>;
-    query: (workspacePath: string, query: string, k?: number) => Promise<SemanticSearchResult[]>;
+    query: (
+      workspacePath: string,
+      query: string,
+      k?: number,
+      sourceClasses?: string[],
+    ) => Promise<SemanticSearchResult[]>;
   };
 
   // File menu callbacks
@@ -899,6 +904,8 @@ interface ElectronAPI {
         orgKeyBase64: string;
         /** Legacy org key for reading pre-migration rows in server-managed mode (NIM-878). */
         legacyOrgKeyBase64?: string;
+        /** All candidate legacy org-key epochs for pre-migration rows that may span rotations (NIM-959). */
+        legacyOrgKeysBase64?: string[];
         orgKeyFingerprint?: string;
         serverUrl: string;
         userId: string;
@@ -923,6 +930,10 @@ interface ElectronAPI {
       documentType: string,
       content: string
     ) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    registerCollabAdapterDescriptor: (descriptor: unknown) => Promise<{
       success: boolean;
       error?: string;
     }>;

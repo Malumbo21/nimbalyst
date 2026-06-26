@@ -139,6 +139,18 @@ export type {
   UseCollaborativeEditorResult,
 } from './useCollaborativeEditor';
 
+// Collab content adapter factory + cross-process reconstruction (re-exported
+// from the SDK so the Electron main process can use them via @nimbalyst/runtime
+// without depending on @nimbalyst/extension-sdk directly).
+export {
+  createTextCollabContentAdapter,
+  reconstructCollabContentAdapterFromDescriptor,
+  TEXT_COLLAB_DEFAULT_FIELD,
+  type TextCollabContentAdapterOptions,
+  type CollabAdapterDescriptor,
+  type TextCollabAdapterDescriptor,
+} from '@nimbalyst/extension-sdk';
+
 // Extension Storage
 export {
   createExtensionStorage,

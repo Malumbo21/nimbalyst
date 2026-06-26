@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional "Shared" column in the tracker table shows whether each item is shared with the team or local-only.
 - Database Browser maintenance action to reclaim space used by old Claude Code sessions, with an optional compaction step.
 - Copy a shareable link to a team shared document from the editor header.
+- Share and co-edit more document types in real time, including spreadsheets and code files, not just markdown.
 
 ### Changed
 - Claude Code sessions store and sync far less redundant data (no more full original-file copies on every edit), shrinking the local database and mobile transfers.
@@ -32,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reopened secondary projects now scope the tracker list to the correct project instead of the startup project's items.
 - Fixed tracker field corruption on the SQLite backend caused by merging JSON updates.
 - Shared documents no longer get stuck on a blank "Offline – unsynced changes" editor when a session token was scoped to the wrong org.
+- Shared document bodies written before a team's encryption-key rotation now decrypt and load instead of opening blank.
 - Committing no longer triggers a burst of slow database queries that briefly hitched the app.
+- Excalidraw drawings shared with the team no longer open blank or render with a light canvas in dark mode.
 
 ### Removed
 <!-- Removed features go here -->

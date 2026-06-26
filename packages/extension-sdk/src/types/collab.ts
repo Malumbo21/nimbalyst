@@ -24,6 +24,24 @@ import type { Doc } from 'yjs';
 
 export type CollabContentFileSource = string | Uint8Array;
 
+/**
+ * Serializable description of a CollabContentAdapter that lets the HOST
+ * replicate the adapter in another process (e.g. the Electron main process)
+ * WITHOUT loading the extension's code or doing a dynamic import. Only adapters
+ * built from a known host factory carry one. Today the single kind is `text`
+ * (a one-`Y.Text` document, produced by `createTextCollabContentAdapter`).
+ */
+export interface TextCollabAdapterDescriptor {
+  kind: 'text';
+  documentType: string;
+  fileExtensions: string[];
+  mimeType?: string;
+  textField: string;
+  layoutVersion: number;
+}
+
+export type CollabAdapterDescriptor = TextCollabAdapterDescriptor;
+
 export interface CollabContentAdapterMigration {
   from: number;
   to: number;
@@ -93,6 +111,12 @@ export interface CollabContentAdapter<TStructured = unknown> {
   /** Optional: restore a revision snapshot. Defaults to
    *  `Y.applyUpdateV2(yDoc, bytes)`. */
   restoreRevisionSnapshot?(yDoc: Doc, bytes: Uint8Array): void;
+
+  /** Optional: a serializable descriptor the host can ship to another process
+   *  to rebuild this adapter without the extension's code. Set automatically by
+   *  host factories like `createTextCollabContentAdapter`; hand-written
+   *  adapters may leave it undefined (they stay process-local). */
+  serializableDescriptor?: CollabAdapterDescriptor;
 }
 
 /**

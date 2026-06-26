@@ -838,8 +838,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   semanticSearch: {
     isAvailable: (workspacePath: string) =>
       ipcRenderer.invoke('semantic-search:available', workspacePath) as Promise<boolean>,
-    query: (workspacePath: string, query: string, k?: number) =>
-      ipcRenderer.invoke('semantic-search:query', workspacePath, query, k) as Promise<
+    query: (workspacePath: string, query: string, k?: number, sourceClasses?: string[]) =>
+      ipcRenderer.invoke('semantic-search:query', workspacePath, query, k, sourceClasses) as Promise<
         Array<{
           refType: string;
           refId: string;
@@ -915,6 +915,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
         documentType,
         content,
       }) as Promise<{ success: boolean; error?: string }>,
+    // Forward a serializable collab adapter descriptor so the main process can
+    // rebuild the adapter (dynamic main-process adapters for any extension).
+    registerCollabAdapterDescriptor: (descriptor: unknown) =>
+      ipcRenderer.invoke('collab-adapter:register-descriptor', descriptor) as Promise<{
+        success: boolean;
+        error?: string;
+      }>,
     getLocalOrigin: (workspacePath: string, documentId: string) =>
       ipcRenderer.invoke('document-sync:get-local-origin', {
         workspacePath,

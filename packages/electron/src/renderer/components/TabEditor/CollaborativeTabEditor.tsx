@@ -66,6 +66,8 @@ import { CollabAssetService } from '../../services/CollabAssetService';
 import { customEditorRegistry } from '../CustomEditors';
 import type { CustomEditorRegistration } from '../CustomEditors/types';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
+import { getCollabContentAdapter } from '@nimbalyst/collab-adapters';
+import { errorNotificationService } from '../../services/ErrorNotificationService';
 import { FilePathBreadcrumb } from '../common/FilePathBreadcrumb';
 import { UnifiedEditorHeaderBar } from './UnifiedEditorHeaderBar';
 import {
@@ -306,6 +308,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
     if (controller.getStatus() !== 'connected') return false;
 
     const snapshot = normalizeSnapshotBytes(await controller.exportSnapshot());
+    // An empty snapshot has nothing to record, and the server rejects a revision
+    // with an empty encryptedSnapshot (400 "payload.encryptedSnapshot is
+    // required"). This happens when the body never hydrated (e.g. an undecodable
+    // snapshot left the Y.Doc blank) -- don't push a bootstrap/auto revision for
+    // it. See NIM-959.
+    if (snapshot.length === 0) return false;
     const contentHash = await sha256Hex(snapshot);
     if (options.skipIfLatestMatches && contentHash === lastRecordedRevisionHashRef.current) {
       lastObservedSnapshotHashRef.current = contentHash;
@@ -737,6 +745,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         const snapshot = normalizeSnapshotBytes(await controller.exportSnapshot());
         if (cancelled) return;
 
+        // An empty snapshot base64-encodes to '', which the revisions endpoint
+        // rejects ("payload.encryptedSnapshot is required"). Because the failed
+        // POST never records the revision, the idle doc would retry every poll
+        // forever. Skip empty snapshots entirely.
+        if (snapshot.byteLength === 0) return;
+
         const contentHash = await sha256Hex(snapshot);
         if (cancelled) return;
 
@@ -809,6 +823,46 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
     if (!match.collaboration?.supported) return null;
     return match;
   }, [documentType, fileName, activeConfig.title]);
+  // Manual resync ("Re-upload to Shared Doc"). For an OPEN custom-editor collab
+  // doc we MUST write through the live renderer connection: the default IPC
+  // path opens a throwaway main-process provider that connects -> writes ->
+  // disconnects, and the collab room (Durable Object) can evict before durably
+  // persisting when no client stays connected, so the upload is silently lost.
+  // The open editor's provider stays connected, so applying the local file via
+  // the live Y.Doc both repaints the canvas (the binding observes the change)
+  // and durably syncs to the server. Falls back to the IPC when the doc isn't
+  // open or is markdown (which has its own bootstrap path).
+  const handleReuploadFromLocal = useCallback(async () => {
+    const provider = syncProviderRef.current;
+    if (documentType !== 'markdown' && provider) {
+      try {
+        const adapter = getCollabContentAdapter(documentType);
+        const originRes = await window.electronAPI?.documentSync?.getLocalOrigin?.(
+          activeConfig.workspacePath,
+          activeConfig.documentId,
+        );
+        const localPath = originRes?.binding?.resolvedPath;
+        if (adapter?.applyFromFile && localPath && window.electronAPI?.readFileContent) {
+          const fileRes = await window.electronAPI.readFileContent(localPath);
+          if (fileRes?.success && typeof fileRes.content === 'string') {
+            adapter.applyFromFile(provider.getYDoc(), fileRes.content);
+            errorNotificationService.showInfo(
+              'Shared document updated',
+              'Pushed the current local file into the shared document.',
+              { duration: 4000 },
+            );
+            await localOrigin.refresh();
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('[CollaborativeTabEditor] live re-upload failed; falling back to IPC', err);
+      }
+    }
+    // Doc not open / not a custom editor -> main-process re-upload.
+    void localOrigin.reuploadFromLocalSource();
+  }, [documentType, activeConfig, localOrigin]);
+
   const localOriginActionItems = useMemo(() => {
     const actionDisabled = localOrigin.busyAction !== null;
     return [
@@ -825,7 +879,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         icon: 'upload',
         disabled: !localOrigin.binding || actionDisabled,
         onClick: () => {
-          void localOrigin.reuploadFromLocalSource();
+          void handleReuploadFromLocal();
         },
       },
       {
@@ -845,7 +899,7 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
         },
       },
     ];
-  }, [localOrigin]);
+  }, [localOrigin, handleReuploadFromLocal]);
   const handleLexicalEditorReady = useCallback((editor: any) => {
     setLexicalEditor((prev: any) => (prev === editor ? prev : editor));
     lexicalEditorRef.current = editor ?? null;
