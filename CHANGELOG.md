@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.66.5] - 2026-06-26
+
+
+### Added
 - Reference a tracker item from any document or AI chat: type `#` to pick an existing item and insert a live chip showing its current status and title (filter by type with `bug:`, search by key or title), with a one-click way to turn a legacy inline tracker into a real tracked item. The AI now links tracker items as clickable chips too.
 - New Nimbalyst Memory extension: indexes your project notes and surfaces relevant facts to the AI and voice agent for grounded answers.
 - Global semantic search in Quick Open (Cmd+Shift+O): find any tracker or document by meaning, with an option to include past AI sessions; available when the Nimbalyst Memory extension is enabled.
@@ -39,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared documents whose name contains spaces or other special characters now open instead of failing to sync.
 - Committing no longer triggers a burst of slow database queries that briefly hitched the app.
 - Excalidraw drawings shared with the team no longer open blank or render with a light canvas in dark mode.
+- Reopening a shared document in Shared Docs mode no longer instantly closes the tab.
 
 ### Removed
 <!-- Removed features go here -->
