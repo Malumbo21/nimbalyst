@@ -174,7 +174,9 @@ A concise reference of all features in the product. Keep this up to date as feat
 
 ## Voice Mode
 
-- Voice control via OpenAI Realtime API
+- Voice control via OpenAI Realtime API (gpt-realtime-2 by default, with automatic fallback to gpt-realtime)
+- Selectable model and reasoning effort in settings
+- Automatic reconnect with backoff on dropped connections (transient "reconnecting" state; voice/model preserved)
 - Live transcription streaming
 - Voice commands with countdown before submit
 - Interactive prompt answering (verbal AskUserQuestion, plan approval, git commit)

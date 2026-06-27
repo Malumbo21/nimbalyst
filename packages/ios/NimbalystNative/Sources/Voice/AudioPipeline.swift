@@ -126,8 +126,15 @@ final class AudioPipeline: @unchecked Sendable {
 
     // MARK: - Playback state
 
-    /// Ring buffer: main thread writes 48kHz PCM16, VPIO bus 0 render callback reads
-    nonisolated(unsafe) private var playbackRingBuffer = PlaybackRingBuffer(capacity: 48000 * 5)
+    /// Ring buffer: main thread writes 48kHz PCM16, VPIO bus 0 render callback reads.
+    ///
+    /// Sized to hold a full reply's worth of lead. gpt-realtime-2 streams output
+    /// audio much FASTER than real time, so a longer reply (a session list, a
+    /// summary) arrives in a burst while the render callback drains at the fixed
+    /// hardware rate. If the buffer is too small it fills and write() drops the
+    /// overflow -- dropped frames are heard as the voice "speeding up"/skipping
+    /// near the end of the reply. 90s @ 48kHz absorbs the burst so nothing drops.
+    nonisolated(unsafe) private var playbackRingBuffer = PlaybackRingBuffer(capacity: 48000 * 90)
 
     /// AVAudioConverter for 24kHz -> 48kHz resampling (playback direction)
     private var playbackConverter: AVAudioConverter?
@@ -450,7 +457,15 @@ final class AudioPipeline: @unchecked Sendable {
 
         // Write resampled 48kHz data to ring buffer
         guard let outputData = outputBuffer.int16ChannelData else { return }
-        _ = playbackRingBuffer.write(outputData[0], count: Int(outputBuffer.frameLength))
+        let toWrite = Int(outputBuffer.frameLength)
+        let written = playbackRingBuffer.write(outputData[0], count: toWrite)
+        if written < toWrite {
+            // Overflow: the realtime consumer can't keep up with the burst, so
+            // frames were dropped -> audible "speed up"/skipping. Logged so the
+            // cause is observable instead of silent. If this fires, the buffer
+            // needs to be larger (or playback needs real back-pressure).
+            logger.error("playback ring overflow: dropped \(toWrite - written)/\(toWrite) frames (avail=\(self.playbackRingBuffer.availableFrames))")
+        }
 
         isPlaying = true
         endOfPlaybackMarked = false

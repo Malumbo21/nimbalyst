@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-<!-- New features go here -->
+- Start a new coding session by voice — say "create a new session" on desktop or mobile.
+- Voice mode on mobile can now find sessions by topic, switch sessions, summarize a session, and send coding tasks to your desktop.
+- Choose the voice model and reasoning level in Voice Mode settings.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Voice mode now always speaks in your configured preferred language, including on mobile, instead of sometimes starting up in a different language.
 - The iOS voice agent now reliably speaks its response when it wakes up after a coding agent finishes a task.
+- Voice replies no longer speed up or skip near the end of longer responses.
 
 ### Removed
 <!-- Removed features go here -->
