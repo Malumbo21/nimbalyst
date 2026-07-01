@@ -138,4 +138,13 @@ describe('transcriptUrlTransform', () => {
   it('still sanitizes dangerous protocols', () => {
     expect(transcriptUrlTransform('javascript:alert(1)')).toBe('');
   });
+
+  // Tracker reference links (`nimbalyst://NIM-123`) were blanked by the default
+  // transform (unknown protocol), so the tracker-chip check in the `a` renderer
+  // never saw the href and the link opened a blank window on click.
+  it('preserves nimbalyst:// tracker reference URNs', () => {
+    expect(transcriptUrlTransform('nimbalyst://NIM-1315')).toBe(
+      'nimbalyst://NIM-1315'
+    );
+  });
 });
