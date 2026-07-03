@@ -378,3 +378,41 @@ describe('async (deferred) function calling', () => {
     expect(JSON.parse(output.item.output).message).toContain('queued');
   });
 });
+
+describe('queued-action approval messaging (countdown accuracy)', () => {
+  // submit_agent_prompt is a QUEUED action: the renderer shows an on-screen
+  // countdown and auto-sends it. The agent must not solicit verbal approval or
+  // imply it is waiting for a yes -- that misrepresents the interaction model.
+  it('instructions describe the auto-send countdown and forbid asking for approval', () => {
+    const client = makeClient('gpt-realtime-2');
+    const sent = attachFakeSocket(client);
+
+    (client as any).updateSession();
+
+    const update = sent.find((e) => e.type === 'session.update');
+    const instructions: string = update.session.instructions;
+    // The true model is stated: queued + auto-send countdown the user controls.
+    expect(instructions).toContain('not an approval gate');
+    expect(instructions).toContain('auto-sends after a short countdown');
+    // Misleading approval phrasing is explicitly forbidden.
+    expect(instructions).toContain('"if you approve"');
+    // Genuine approval is reserved for real interactive prompts only.
+    expect(instructions).toContain('[INTERACTIVE PROMPT: ...]');
+  });
+
+  it('the queued submit_agent_prompt result reflects the countdown, not an approval gate', async () => {
+    const client = makeClient('gpt-realtime'); // fallback model returns a synthetic queued result
+    client.setOnSubmitPrompt(vi.fn(async () => {}));
+    const sent = attachFakeSocket(client);
+
+    await (client as any).handleFunctionCall('call-9', 'submit_agent_prompt', JSON.stringify({ prompt: 'do z' }));
+
+    const output = sent.find((e) => e.item?.type === 'function_call_output');
+    const message: string = JSON.parse(output.item.output).message;
+    expect(message).toContain('auto-sends');
+    expect(message).toContain('countdown');
+    expect(message).toContain('notified when it completes');
+    // It must NOT frame the queued action as awaiting the user's approval.
+    expect(message.toLowerCase()).not.toContain('if you approve');
+  });
+});

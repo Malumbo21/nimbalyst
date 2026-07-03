@@ -348,6 +348,12 @@ Audio is gated by listen state in `VoiceModeButton`: the callback only sends IPC
 
 Playback is interrupted on `voice-mode:interrupt` events (VAD detected user speech) by stopping all scheduled sources and clearing the queue.
 
+### Echo Cancellation on iOS (native)
+
+The native iOS voice agent does not rely on browser AEC. `packages/ios/NimbalystNative/Sources/Voice/AudioPipeline.swift` runs a single `kAudioUnitSubType_VoiceProcessingIO` (VPIO) audio unit: microphone capture comes in on bus 1 (48kHz PCM16), and assistant playback is rendered through a render callback on bus 0. Because playback flows through the same unit that captures, VPIO uses the bus 0 output signal as its echo-cancellation reference, so Apple's AEC subtracts the assistant's own voice from the mic — enabling barge-in without the agent interrupting itself.
+
+Because AEC is imperfect on open speakers, both platforms route every VAD `speech_started` through a shared barge-in policy (`voiceBargeInPolicy.ts` / `BargeInPolicy.swift`, NIM-1314). A trigger while agent audio is audibly playing is **echo-suspect**: instead of interrupting immediately, playback continues through a 500ms probation window; if the speech ends inside it (an echo blip) nothing happens, and if it persists (a real barge-in) the interrupt fires with truncation measured at fire time. Triggers while silent interrupt immediately. Server-side, responses are gated (`create_response`/`interrupt_response=false`) while agent audio plays. All decisions are logged with `[barge-in]` tags including a per-session summary (echo-suspect vs genuine vs suppressed counts).
+
 ## Settings
 
 Voice mode settings are stored in `nimbalyst-settings` electron-store (not `ai-settings`) under the `voiceMode` key.
@@ -409,7 +415,11 @@ On iOS the setting arrives via settings sync: `preferredAgentLanguage` is a top-
 
 ## Mobile (iOS) Voice Agent
 
-The iOS app runs its own on-device voice agent (`packages/ios/.../Voice/VoiceAgent.swift` + the floating `VoiceOverlay`), reusing the same tool surface. Two mobile-specific behaviors:
+The iOS app runs its own on-device voice agent (`packages/ios/.../Voice/VoiceAgent.swift` + the floating `VoiceOverlay`), reusing the same tool surface.
+
+`RealtimeClient.swift` mirrors the desktop Realtime session config: `gpt-realtime-2` with the same one-shot fallback to `gpt-realtime` (a connection that dies before `session.created` retries once on the fallback), `gpt-realtime-whisper` streaming transcription, `reasoning.effort=low`, semantic_vad turn detection with response gating, and far-field noise reduction. The output voice comes from `VoiceModeSettings.voice` (Settings picker, or synced from the desktop's voice preference). Intentional divergences, each commented in code: the instructions length cap is model-aware (8000 chars on gpt-realtime-2, 2000 on the fallback where longer instructions crash audio generation); `submit_agent_prompt` is never a deferred call (the prompt relays over the sync channel and completion arrives as a separate broadcast, so the call can't stay open); and there is no exponential-backoff reconnect (connection loss tears down voice mode; the user re-taps the mic).
+
+Two mobile-specific behaviors:
 
 - **Create-session navigation.** `create_session` is fire-and-forget to the desktop over the index sync channel; the desktop replies with a `createSessionResponseBroadcast` carrying the `requestId` + new `sessionId`. `VoiceAgent` remembers the `requestId` it sent and `consumePendingCreateSession(requestId:)` matches the response, so **only the device that asked** navigates. `AppState.navigateWhenSessionAvailable` waits for the session row to arrive via index sync, then sets `voiceNavigationRequest`, which the iPhone stack and iPad split view observe to open the session.
 - **Tool-call indicator.** `VoiceAgent.currentToolCall` is set when `RealtimeClient.onFunctionCall` fires and cleared by the new `onFunctionResultSent(callId)` hook (so async tools stay lit until they finish). While set, `VoiceOverlay` pulses the outer ring (amber) and shows a per-tool SF Symbol badge in the mic's corner.

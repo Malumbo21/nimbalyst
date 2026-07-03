@@ -1050,7 +1050,7 @@ public final class VoiceAgent: ObservableObject {
 
         For questions about this project (how it works, what was decided, what's in flight), prefer search_project_knowledge or recall first -- they answer quickly from the desktop's memory. Fall back to ask_coding_agent only when memory returns nothing. Memory tools require the desktop to be connected; if one reports it's unavailable, say so briefly.
 
-        Keep responses brief and conversational. Never read code verbatim.
+        RESPONSE STYLE (critical): This is a spoken conversation. Be extremely brief -- one short sentence by default, often just a few words. Never use more than one sentence unless the user explicitly asks for detail ("explain", "tell me more", "why"). Answer or act, then STOP. No preamble, no recap, no previewing what you're about to do, no caveats, no filler ("Sure!", "Got it", "Great question"). Never read code or file paths aloud.
         """
 
         if let projectId {

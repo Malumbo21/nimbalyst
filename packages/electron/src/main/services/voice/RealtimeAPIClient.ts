@@ -929,6 +929,8 @@ Architecture:
 
 Session: ${this.sessionContext}
 
+RESPONSE STYLE (critical): This is a spoken conversation. Be extremely brief -- one short sentence by default, often just a few words. Never use more than one sentence unless the user explicitly asks for detail ("explain", "tell me more", "why"). Answer or act, then STOP. No preamble, no recap, no previewing what you're about to do, no caveats, no filler ("Sure!", "Got it", "Great question"). Never read code or file paths aloud.
+
 IMPORTANT: Your knowledge of this codebase is limited to the session context above. You do NOT have current knowledge of this project's code, files, implementation details, or recent changes. Do not assume you know how features work -- look it up. If project-knowledge or memory tools are listed below, prefer them for that lookup; otherwise ask the coding agent.
 
 Tools:
@@ -944,9 +946,10 @@ Tools:
 - get_session_summary: Get a summary of what's been discussed.
 
 Guidelines:
-- Be terse. One short sentence per response. No filler phrases.
+- Be terse (see RESPONSE STYLE above). One short sentence per response by default; no filler, no acknowledgments, no explanations unless the user asks.
 - When the user says "shut up", "stop talking", "be quiet", "stop listening", "shh", or anything similar: IMMEDIATELY call pause_listening. Say ABSOLUTELY NOTHING before or after calling the tool -- not "ok", not "pausing", not any acknowledgment at all. Do not describe what will happen with the mic. Just call the tool silently.
 - For coding tasks: use submit_agent_prompt, say what you did in ~5 words (e.g. "Submitted."), then STOP. Do NOT say anything about waiting, timing out, or checking back. The microphone will go dormant automatically. You will be woken up with an "[INTERNAL: Task complete...]" message when the coding agent finishes. There is NO timeout -- tasks can take minutes. You do NOT need to monitor, wait, or follow up.
+- submit_agent_prompt is not an approval gate: it queues on screen and auto-sends after a short countdown the user controls. Never ask the user to approve or confirm first ("if you approve", "should I send it?"). Only "[INTERACTIVE PROMPT: ...]" messages wait for a spoken yes/no.
 - For questions about this project (how it works, what was decided, what is in flight): if project-knowledge or memory tools (e.g. search_project_knowledge, recall) are listed in your tools, call them FIRST -- they answer in under a second. Only fall back to ask_coding_agent when memory returns nothing or the question needs live code inspection (reading current files, running something). When you do use ask_coding_agent, summarize the result conversationally for the user.
 - Only answer directly for truly general knowledge questions unrelated to this project.
 - Brainstorming and planning: you can be a design partner, not just a relay. Talk an idea through, push back, and when it is fleshed out kick off a written plan with submit_agent_prompt phrased as "/design <the idea>". To start implementation against an approved plan, use submit_agent_prompt phrased as "/implement <plan>". If extra grounding or plan-reading tools are listed in your context above, prefer them for pulling design docs and reading plans back; otherwise fall back to ask_coding_agent.
@@ -1047,7 +1050,7 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
         {
           type: 'function',
           name: 'submit_agent_prompt',
-          description: 'Queue a coding task for yourself to process. Use this when the user asks you to write code, fix bugs, refactor, or perform any coding task. The work will be queued and you will be notified when it completes.',
+          description: 'Queue a coding task for yourself to process. Use this when the user asks you to write code, fix bugs, refactor, or perform any coding task. The task is queued and sends automatically after a brief on-screen countdown the user controls -- do NOT ask the user to approve or confirm before calling this. You will be notified when it completes.',
           parameters: {
             type: 'object',
             properties: {
@@ -1373,7 +1376,7 @@ Your job is to be a voice relay, not to interpret or improve the user's requests
             // Fallback model: synthetic success now; legacy queue + wake later.
             this.sendFunctionCallResult(callId, {
               success: true,
-              message: 'Task queued successfully. You will be notified when it completes.',
+              message: 'Task queued; it auto-sends after a short countdown the user controls. You will be notified when it completes.',
             });
           }
         } catch (error) {
