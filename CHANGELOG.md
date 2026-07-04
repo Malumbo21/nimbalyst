@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.66.10] - 2026-07-04
+
+
+### Added
+<!-- New features go here -->
 - Sync settings now show a per-project document-sync status (connected, file count, or an error) so you can tell whether mobile document sync is working.
 
 ### Changed
