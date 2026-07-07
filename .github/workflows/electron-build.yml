@@ -101,8 +101,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: '**/package-lock.json'
 
-      - name: Upgrade npm to 10.x
-        run: npm install -g npm@10
+      - name: Upgrade npm to 11.x
+        run: npm install -g npm@11
 
       - name: Install dependencies
         shell: bash
