@@ -18,8 +18,29 @@ export interface SubagentTaskLike {
 // The immediate tool_result the SDK returns when a command/sub-agent is
 // launched in (or moved to) the background. It is a launch acknowledgement,
 // not a completion: the task is still running and will settle later via a
-// system task_notification chunk.
-const BACKGROUND_LAUNCH_ACK = /running in (the )?background/i;
+// system task_notification chunk. The CLI has used several wordings —
+// "Command running in background with ID: …" (Bash), "Task is now running in
+// the background" and "Async agent launched successfully… The agent is
+// working in the background" (sub-agents) — so match all of them. NIM-1556.
+const BACKGROUND_LAUNCH_ACK = /running in (the )?background|working in the background|async agent launched/i;
+
+/**
+ * Flatten tool_result content to searchable text. The SDK delivers it either
+ * as a plain string or as an array of content blocks ({type:'text', text}) —
+ * the sub-agent launch acknowledgement arrives as the latter. NIM-1556.
+ */
+export function extractToolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(block =>
+        block && typeof block === 'object' && typeof (block as { text?: unknown }).text === 'string'
+          ? (block as { text: string }).text
+          : '')
+      .join('\n');
+  }
+  return '';
+}
 
 /**
  * Decide whether a tool_result whose toolUseId matches a tracked task means
@@ -39,7 +60,7 @@ export function shouldSettleTaskFromToolResult(
   if (task.taskType === 'local_bash') return false;
   // Authoritative signal from a task_updated patch, when the CLI sent one.
   if (task.isBackgrounded) return false;
-  if (typeof resultContent === 'string' && BACKGROUND_LAUNCH_ACK.test(resultContent)) return false;
+  if (BACKGROUND_LAUNCH_ACK.test(extractToolResultText(resultContent))) return false;
   return true;
 }
 

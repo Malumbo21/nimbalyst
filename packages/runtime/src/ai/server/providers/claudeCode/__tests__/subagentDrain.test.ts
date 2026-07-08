@@ -43,6 +43,35 @@ describe('shouldSettleTaskFromToolResult', () => {
     ).toBe(false);
   });
 
+  // Regression: NIM-1556. The sub-agent background-launch acknowledgement no
+  // longer says "running in the background" — it now reads "Async agent
+  // launched successfully. ... The agent is working in the background." and
+  // arrives as an array of content blocks. Both differences made the guard
+  // settle the task at launch, so the drain never engaged and teardown killed
+  // the sub-agent 5s after the lead turn ended.
+  it('does not settle a backgrounded sub-agent on the "Async agent launched" acknowledgement', () => {
+    const task = { taskType: 'local_agent', status: 'running' };
+    const ack =
+      'Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)\n'
+      + "agentId: a031abbe9a4b13f54 (internal ID - do not mention to user. Use SendMessage with to: 'a031abbe9a4b13f54', summary: '<5-10 word recap>' to continue this agent.)\n"
+      + 'The agent is working in the background. You will be notified automatically when it completes.';
+    expect(shouldSettleTaskFromToolResult(task, ack)).toBe(false);
+  });
+
+  it('does not settle on a launch acknowledgement delivered as content blocks', () => {
+    const task = { taskType: 'local_agent', status: 'running' };
+    expect(
+      shouldSettleTaskFromToolResult(task, [
+        { type: 'text', text: 'Async agent launched successfully.\nThe agent is working in the background.' },
+      ]),
+    ).toBe(false);
+    expect(
+      shouldSettleTaskFromToolResult(task, [
+        { type: 'text', text: 'Task is now running in the background. Use TaskOutput to check.' },
+      ]),
+    ).toBe(false);
+  });
+
   it('settles a foreground sub-agent whose tool call blocked until completion', () => {
     const task = { taskType: 'local_agent', status: 'running' };
     expect(shouldSettleTaskFromToolResult(task, 'Agent finished: findings attached.')).toBe(true);

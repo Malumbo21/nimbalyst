@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 <!-- Bug fixes go here -->
 - Agent sessions defer MCP tool definitions until used on all models, and multi-worktree projects no longer load duplicate copies of project commands.
+- Background agents launched by a session are no longer killed when the session's turn ends; the session stays alive and wakes when they finish.
 
 ### Removed
 <!-- Removed features go here -->
