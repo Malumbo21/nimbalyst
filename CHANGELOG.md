@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.68.0] - 2026-07-10
+
+
+### Added
+<!-- New features go here -->
 - OpenCode presets now include GLM 5.2 through the Z.AI and Z.AI Coding Plan providers.
 - GPT-5.6 (Sol, Terra, and Luna) is available for the OpenAI and Codex agents, with Sol as the new default.
 
@@ -25,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - File links to paths with spaces (e.g. `My Project`) now stay clickable in chat instead of breaking at the first space.
 - Sidebar resize handles now keep responding while dragged over a mockup preview.
 - Codex/ChatGPT sessions no longer reject Nimbalyst's own tools with "user rejected MCP tool call".
+- Extension agent provider settings now save correctly instead of being discarded.
 
 ### Removed
 <!-- Removed features go here -->
