@@ -224,6 +224,23 @@ A concise reference of all features in the product. Keep this up to date as feat
 - Mobile voice: asking the voice agent to start a new session opens it automatically on the device that asked
 - Mobile voice: the floating mic shows a tool-call indicator (animated ring + tool-icon badge) while the agent runs a tool
 
+## Mobile (Android)
+
+Companion app; pairs with a desktop over encrypted sync. Voice mode is not included on Android.
+
+- Native Kotlin/Compose app with end-to-end encrypted sync
+- QR code pairing with desktop
+- Email magic link and Google OAuth login
+- Synced projects and sessions with unread state and desktop connection indicator
+- Session transcript viewing (WebView)
+- Start a desktop-backed session from Android
+- Submit prompts with image attachments
+- Answer interactive prompts (tool permissions, questions, plan approvals) from mobile
+- Queued prompt management
+- AI model picker (synced from desktop)
+- Push notifications for agent/session updates, with tap-to-open routing and an in-app toggle
+- In-app account deletion (permanently removes the account and all synced data)
+
 ## Collaboration
 
 > **Encryption posture.** Team collaboration data (trackers, documents, doc-index

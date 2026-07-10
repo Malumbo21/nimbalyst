@@ -216,6 +216,9 @@ class SyncManager(
         notificationManager.onTokenReceived = { token ->
             registerPushToken(token)
         }
+        notificationManager.onTokenRemoved = {
+            unregisterPushToken()
+        }
     }
 
     fun connectIfConfigured() {
@@ -508,6 +511,21 @@ class SyncManager(
             Result.success(Unit)
         } else {
             Result.failure(IllegalStateException("Failed to register push token."))
+        }
+    }
+
+    fun unregisterPushToken(): Result<Unit> {
+        if (!indexClient.isConnected) {
+            return Result.failure(IllegalStateException("Index room is not connected."))
+        }
+
+        val message = UnregisterPushTokenMessage(
+            deviceId = WebSocketClient.getDeviceId(context)
+        )
+        return if (indexClient.sendRaw(gson.toJson(message))) {
+            Result.success(Unit)
+        } else {
+            Result.failure(IllegalStateException("Failed to unregister push token."))
         }
     }
 

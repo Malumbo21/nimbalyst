@@ -8,6 +8,7 @@
     "sync:transcript-assets": "bash ./scripts/sync-transcript-assets.sh",
     "android:assemble:debug": "./gradlew :app:assembleDebug",
     "android:assemble:release": "./gradlew :app:assembleRelease",
+    "android:bundle:release": "./gradlew :app:bundleRelease",
     "android:test:unit": "./gradlew :app:testDebugUnitTest"
   },
   "dependencies": {
@@ -26,4 +27,3 @@
     "vite": "^7.1.12"
   }
 }
-
