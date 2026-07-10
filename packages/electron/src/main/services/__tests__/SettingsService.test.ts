@@ -250,6 +250,26 @@ describe('SettingsService', () => {
     expect(svc.get('ai.apiKey.opencode')).toBe('sk-opencode-test');
   });
 
+  it('round-trips an extension-contributed agent provider key (NIM-1581 / #803)', async () => {
+    const { getSettingsService, isSettingKey } = await import('../SettingsService');
+    const svc = getSettingsService();
+
+    // Extension-contributed agent providers (e.g. antigravity-gemini-agent) are
+    // registered dynamically at runtime, so their `ai.provider.<id>` key is not
+    // in the static SETTINGS_REGISTRY. The per-key flush must still accept it or
+    // the provider's config can never be saved (the `settings:set` handler threw
+    // "Unknown setting key: ai.provider.antigravity-gemini-agent").
+    const key = 'ai.provider.antigravity-gemini-agent';
+    expect(isSettingKey(key)).toBe(true);
+    svc.set(key as any, { enabled: true } as any);
+    expect(svc.get(key as any)).toMatchObject({ enabled: true });
+
+    // Stored under the same providerSettings.<id> shape as built-in providers so
+    // the legacy AIService reads keep working.
+    const onDisk = JSON.parse(fs.readFileSync(STORE_FALLBACK, 'utf8'));
+    expect(onDisk.providerSettings['antigravity-gemini-agent']).toMatchObject({ enabled: true });
+  });
+
   it('preserves the existing on-disk shape (providerSettings.<id> path)', async () => {
     const { getSettingsService } = await import('../SettingsService');
     const svc = getSettingsService();
