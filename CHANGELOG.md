@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 <!-- Changes to existing functionality go here -->
 - Completed tracker reference chips now show a checkmark and crossed-out text in documents and AI chats.
+- Mobile session sync now skips messages the mobile transcript never displays, cutting sync storage and traffic.
 
 ### Fixed
 - Importing Mermaid diagrams into Excalidraw works again: flowcharts (including subgraphs) become editable shapes instead of failing or degrading to a broken image, and AI-added arrows no longer lose their labels.

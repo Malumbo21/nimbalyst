@@ -2569,7 +2569,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           // Send each message
           for (const message of messages) {
-            if (!shouldSyncMessageForSessionRoom(message.source, message.metadata, message.content)) {
+            if (!shouldSyncMessageForSessionRoom(message.source, message.metadata, message.content, message.hidden)) {
               continue;
             }
             const encrypted = await encryptMessage(message, config.encryptionKey!);
@@ -3069,7 +3069,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             console.warn('[CollabV3] Cannot push message - no encryption key or session room not connected');
             return;
           }
-          if (!shouldSyncMessageForSessionRoom(change.message.source, change.message.metadata, change.message.content)) {
+          if (!shouldSyncMessageForSessionRoom(change.message.source, change.message.metadata, change.message.content, change.message.hidden)) {
             return;
           }
           try {
