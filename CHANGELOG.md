@@ -19,12 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Mobile session sync now skips messages the mobile transcript never displays, cutting sync storage and traffic.
 
 ### Fixed
+- PR mode now explains when a merge needs the GitHub CLI `workflow` scope and offers the recovery command instead of showing `gh api -X failed`.
 - Importing Mermaid diagrams into Excalidraw works again: flowcharts (including subgraphs) become editable shapes instead of failing or degrading to a broken image, and AI-added arrows no longer lose their labels.
 - Voice mode no longer stops listening while you are still speaking; the mic stays open until you finish or explicitly pause.
 - Shared-document comments now live in the text-selection toolbar instead of overlapping it.
 - MCP servers disabled in Settings no longer load in Claude Code (SDK) sessions; the disable toggle now governs both the CLI and SDK paths.
 - Directory grouping now handles Windows paths consistently across session edits, commit proposals, and Git history.
 - Stopping a running Codex session (including from mobile) now interrupts it immediately instead of leaving it stuck showing as running.
+- Tracker status badges and custom columns no longer vanish after a synced update; they stay put instead of blanking out until the next reload.
 
 ### Removed
 <!-- Removed features go here -->
