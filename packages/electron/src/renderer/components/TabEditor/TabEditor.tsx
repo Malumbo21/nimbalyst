@@ -2242,6 +2242,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
         store.set(historyDialogFileAtom, filePath);
       },
 
+      // Open only host-normalized HTTPS references outside the renderer.
+      openExternal: (url: string) => window.electronAPI.openExternal(url),
+
       // Subscribe to diff requests (optional - for editors that support diff mode)
       subscribeToDiffRequests: customEditorSupportsDiffMode
         ? (callback: (config: DiffConfig) => void): (() => void) => {

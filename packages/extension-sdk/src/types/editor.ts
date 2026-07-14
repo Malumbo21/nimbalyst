@@ -416,6 +416,13 @@ export interface EditorHost {
    */
   openHistory(): void;
 
+  /**
+   * Open a reviewed HTTPS URL in the operating system's external browser.
+   * The host normalizes and validates the URL before crossing the Electron
+   * boundary; custom editors must not navigate the renderer directly.
+   */
+  openExternal?(url: string): Promise<void>;
+
   // ============ DIFF MODE (OPTIONAL) ============
 
   /**
