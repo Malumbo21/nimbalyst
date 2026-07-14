@@ -40,6 +40,7 @@ export type ProjectSettingsCategory =
   | 'project-agent-permissions'
   | 'project-trackers'
   | 'project-ai-providers'
+  | 'project-mcp-servers'
   | 'project-github'
   | 'project-extensions';
 
@@ -127,6 +128,7 @@ export const settingsRoutes: readonly SettingsRoute[] = [
   { id: 'project-agent-permissions', scope: 'project', group: 'Project', label: 'Agent Permissions', icon: 'shield' },
   { id: 'project-trackers', scope: 'project', group: 'Project', label: 'Trackers', icon: 'assignment' },
   { id: 'project-ai-providers', scope: 'project', group: 'Project', label: 'AI Providers', icon: 'smart_toy' },
+  { id: 'project-mcp-servers', scope: 'project', group: 'Project', label: 'MCP Servers', icon: 'dns' },
   { id: 'project-github', scope: 'project', group: 'Project', label: 'GitHub', icon: 'merge', isAvailable: developerOnly },
   { id: 'project-extensions', scope: 'project', group: 'Project', label: 'Extensions', icon: 'extension' },
 ] as const;
@@ -202,9 +204,11 @@ export function normalizeSettingsDestination(link: LegacySettingsLink): Settings
       ? 'project-trackers'
       : legacyCategory === 'agent-permissions'
         ? 'project-agent-permissions'
-        : legacyCategory === 'github'
-          ? 'project-github'
-          : 'project-sharing';
+        : legacyCategory === 'mcp-servers'
+          ? 'project-mcp-servers'
+          : legacyCategory === 'github'
+            ? 'project-github'
+            : 'project-sharing';
     return { scope, category, target };
   }
   if (scope === 'personal') {

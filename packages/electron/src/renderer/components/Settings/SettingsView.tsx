@@ -901,6 +901,10 @@ export function SettingsView({
         );
       case 'privileged-extensions':
         return <PrivilegedExtensionsPanel workspacePath={workspacePath ?? undefined} />;
+      case 'project-mcp-servers':
+        return workspacePath
+          ? <MCPServersPanel scope="workspace" workspacePath={workspacePath} />
+          : <p className="text-sm text-[var(--nim-text-muted)]">Open a local project to configure MCP servers.</p>;
       case 'mcp-servers':
         return (
           <>
@@ -915,10 +919,7 @@ export function SettingsView({
                 </div>
               </div>
             )}
-            <MCPServersPanel
-              scope={scope === 'project' ? 'workspace' : 'user'}
-              workspacePath={scope === 'project' ? workspacePath ?? undefined : undefined}
-            />
+            <MCPServersPanel scope="user" />
           </>
         );
       case 'tools-mcp':

@@ -26,6 +26,27 @@ describe('settings route registry', () => {
     expect(getDefaultSettingsCategory('project')).toBe('project-sharing');
   });
 
+  it('keeps project-level MCP server configuration reachable', () => {
+    const projectRoutes = getSettingsRoutesForScope('project', { developerMode: false });
+
+    expect(projectRoutes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'project-mcp-servers',
+        scope: 'project',
+        label: 'MCP Servers',
+      }),
+    ]));
+    expect(normalizeSettingsDestination({
+      category: 'mcp-servers',
+      scope: 'project',
+      workspacePath: '/workspace',
+    })).toEqual({
+      scope: 'project',
+      category: 'project-mcp-servers',
+      target: { kind: 'workspace', workspacePath: '/workspace' },
+    });
+  });
+
   it('requires explicit organization and project context', () => {
     expect(validateSettingsDestination({
       scope: 'organization',
