@@ -26,7 +26,6 @@ import {
   isCollabAssetDocumentRegisteredForSender,
   clearCollabAssetSender,
 } from '../protocols/collabAssetProtocol';
-import { deleteRemovedAssets } from '../services/CollabAssetGC';
 import { encryptAndUploadCollabAsset } from '../services/CollabAssetUploader';
 import {
   scanMarkdownImageRefs,
@@ -531,43 +530,17 @@ export function registerDocumentSyncHandlers(): void {
   });
 
   /**
-   * Delete the specific list of `collab-asset://` URIs reported by the
-   * renderer's AssetGCPlugin as having disappeared from the live Yjs
-   * state since the previous scan. Diff-only: we never delete an asset
-   * the client never observed, so concurrent inserts on other peers
-   * (which we may not have received yet) are safe.
+   * NIM-1683: retained as an inert no-op. This channel used to delete the R2
+   * blobs for `collab-asset://` URIs that disappeared from the live editor
+   * state. That is data-loss -- an image removed from the current state is
+   * still referenced by document revision history and undo / cut-paste, which
+   * re-insert the SAME URI. Asset lifetime is now tied to document lifetime;
+   * the collab worker reclaims a doc's assets only when the document is
+   * deleted. The renderer no longer calls this (see CollaborativeTabEditor),
+   * but the handler stays as a safe sink for any stale caller.
    */
-  safeHandle('document-sync:gc-assets', async (event, payload: {
-    orgId: string;
-    documentId: string;
-    removedUris: string[];
-  }) => {
-    if (!isAuthenticated()) {
-      return { success: false, error: 'Not authenticated' };
-    }
-    if (!payload?.orgId || !payload?.documentId) {
-      return { success: false, error: 'orgId and documentId required' };
-    }
-    if (!isCollabAssetDocumentRegisteredForSender(event.sender.id, payload.orgId, payload.documentId)) {
-      return { success: false, error: 'Document not open in this window' };
-    }
-    if (!payload.removedUris || payload.removedUris.length === 0) {
-      return { success: true, requested: 0, deleted: 0, failed: 0, skipped: 0 };
-    }
-
-    try {
-      const orgJwt = await getOrgScopedJwt(payload.orgId);
-      const result = await deleteRemovedAssets(
-        getCollabSyncHttpUrl(),
-        orgJwt,
-        payload.documentId,
-        payload.removedUris
-      );
-      return { success: true, ...result };
-    } catch (err) {
-      logger.main.error('[DocumentSyncHandlers] gc-assets threw', err);
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
-    }
+  safeHandle('document-sync:gc-assets', async () => {
+    return { success: true, requested: 0, deleted: 0, failed: 0, skipped: 0 };
   });
 
 

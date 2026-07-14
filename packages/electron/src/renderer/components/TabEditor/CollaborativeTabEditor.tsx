@@ -665,14 +665,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
 
   const markdownConfig = useMemo(() => ({
     onUploadAsset: (file: File) => assetService.uploadFile(file),
-    onAssetReferencesRemoved: (removedUris: string[]) => {
-      // Fire-and-forget; main deletes exactly the URIs the plugin saw
-      // disappear (never the full server set), so we can't accidentally
-      // delete a peer's still-live attachment.
-      void assetService.notifyAssetReferencesRemoved(removedUris).catch(err => {
-        console.warn('[CollaborativeTabEditor] gc-assets failed', err);
-      });
-    },
+    // NIM-1683: intentionally do NOT wire onAssetReferencesRemoved. Deleting an
+    // asset the moment it leaves the *current* editor state is data-loss --
+    // revision history and undo / cut-paste still reference the same
+    // `collab-asset://` URI. Asset lifetime is tied to document lifetime; the
+    // server reclaims all of a doc's blobs only when the document itself is
+    // deleted. Leaving this unset keeps the asset-GC extension idle.
   }), [assetService]);
 
   // Create a minimal EditorHost for collaboration mode
