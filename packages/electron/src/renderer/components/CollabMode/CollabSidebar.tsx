@@ -640,8 +640,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
       parentFolderId: parentId,
     };
 
-    await registerDocumentInIndex(documentId, title, 'markdown');
-    if (parentId) moveSharedDocument(documentId, parentId);
+    await registerDocumentInIndex(documentId, title, 'markdown', parentId);
 
     if (parentPath) {
       setExpandedFolders((currentFolders) => {

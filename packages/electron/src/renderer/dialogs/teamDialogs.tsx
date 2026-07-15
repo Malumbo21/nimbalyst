@@ -31,7 +31,7 @@ export interface CreateTeamData {
 export interface ShareToTeamData {
   fileName: string;
   sourceRelPath: string;
-  onConfirm: (params: { folderPath: string; sharedName: string }) => void;
+  onConfirm: (params: { folderId: string | null; folderPath: string; sharedName: string }) => void;
 }
 
 // ============================================================================

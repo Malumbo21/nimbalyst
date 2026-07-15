@@ -149,6 +149,9 @@ export class TeamSyncProvider {
    */
   private resyncWaiters: Array<(docs: EncryptedDocIndexEntry[]) => void> = [];
 
+  /** Resolvers waiting for the next decrypted folder-index snapshot. */
+  private folderResyncWaiters: Array<(folders: FolderNode[] | null) => void> = [];
+
   /**
    * Pending doc index messages queued while disconnected.
    * Unlike DocumentSync (which queues CRDT updates), TeamSync was silently
@@ -236,6 +239,9 @@ export class TeamSyncProvider {
     this.teamState = null;
     this.localEntries.clear();
     this.pendingDocIndexMessages = [];
+    const folderWaiters = this.folderResyncWaiters;
+    this.folderResyncWaiters = [];
+    for (const waiter of folderWaiters) waiter(null);
   }
 
   getStatus(): TeamSyncStatus {
@@ -297,13 +303,19 @@ export class TeamSyncProvider {
     return encryptTitle(title, this.config.encryptionKey!);
   }
 
-  async registerDocument(documentId: string, title: string, documentType: string): Promise<void> {
+  async registerDocument(
+    documentId: string,
+    title: string,
+    documentType: string,
+    parentFolderId: string | null = null,
+  ): Promise<void> {
     const { encryptedTitle, titleIv } = await this.encodeTitleForWire(title);
     this.send({
       type: 'docIndexRegister', documentId, encryptedTitle, titleIv, documentType,
       // Epic H3 P0/A: attribute the doc to the active project so the server's
       // project-partitioned doc index (and a future move) can scope it.
       projectId: this.config.teamProjectId ?? null,
+      parentFolderId,
       orgKeyFingerprint: this.wireOrgKeyFingerprint,
     });
   }
@@ -405,6 +417,29 @@ export class TeamSyncProvider {
   /** Snapshot of the current decrypted folder nodes. */
   getFolders(): FolderNode[] {
     return Array.from(this.folderEntries.values());
+  }
+
+  /**
+   * Request the current first-class folder index from TeamRoom. The promise
+   * resolves only after the matching server snapshot has been decrypted and
+   * applied locally; null means the request timed out.
+   */
+  refreshFolders(timeoutMs = 6000): Promise<FolderNode[] | null> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const done = (folders: FolderNode[] | null) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        this.folderResyncWaiters = this.folderResyncWaiters.filter(waiting => waiting !== waiter);
+        resolve(folders);
+      };
+      const waiter = (folders: FolderNode[] | null) => done(folders);
+      this.folderResyncWaiters.push(waiter);
+      timer = setTimeout(() => done(null), timeoutMs);
+      this.send({ type: 'folderIndexSync' });
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -746,6 +781,9 @@ export class TeamSyncProvider {
     if (this.teamState) {
       this.teamState.folders = folders;
     }
+    const waiters = this.folderResyncWaiters;
+    this.folderResyncWaiters = [];
+    for (const waiter of waiters) waiter(folders);
     this.config.onFoldersLoaded?.(folders);
   }
 

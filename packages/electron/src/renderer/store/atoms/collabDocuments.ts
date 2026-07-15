@@ -398,6 +398,19 @@ export function getTeamSyncProvider(workspacePath?: string): TeamSyncProviderTyp
   return providersByPath.get(path) ?? null;
 }
 
+/**
+ * Ask the active TeamRoom for its current first-class folder index. The
+ * provider's onFoldersLoaded callback reconciles the response into the
+ * workspace-scoped atom before this promise resolves.
+ */
+export async function refreshSharedFolders(workspacePath?: string): Promise<boolean> {
+  const provider = getTeamSyncProvider(workspacePath);
+  if (!provider) return false;
+  const status = provider.getStatus();
+  if (status === 'disconnected' || status === 'error') provider.reconnectNow();
+  return (await provider.refreshFolders()) !== null;
+}
+
 // ============================================================
 // Write Atoms
 // ============================================================
@@ -428,7 +441,8 @@ export const addSharedDocumentAtom = atom(
 export async function registerDocumentInIndex(
   documentId: string,
   title: string,
-  documentType: string = 'markdown'
+  documentType: string = 'markdown',
+  parentFolderId: string | null = null,
 ): Promise<void> {
   const now = Date.now();
   store.set(sharedDocumentsAtom, (current) => {
@@ -440,6 +454,7 @@ export async function registerDocumentInIndex(
       createdBy: '',
       createdAt: now,
       updatedAt: now,
+      parentFolderId,
     }, ...filtered];
   });
 
@@ -447,13 +462,18 @@ export async function registerDocumentInIndex(
   const workspacePath = store.get(activeWorkspacePathAtom);
   if (provider) {
     try {
-      await provider.registerDocument(documentId, title, documentType);
+      await provider.registerDocument(documentId, title, documentType, parentFolderId);
     } catch (err) {
       // NIM-1565: a failed send used to vanish (fire-and-forget). Queue it so
       // the next provider connect retries, instead of orphaning the doc.
       console.error('[collabDocuments] Failed to register in index:', err);
       if (workspacePath) {
-        pendingDocRegistrations.enqueue(workspacePath, { documentId, title, documentType });
+        pendingDocRegistrations.enqueue(workspacePath, {
+          documentId,
+          title,
+          documentType,
+          parentFolderId,
+        });
       }
     }
   } else if (workspacePath) {
@@ -461,7 +481,12 @@ export async function registerDocumentInIndex(
     // initSharedDocuments connected). Queue the registration for flush on
     // connect rather than silently dropping it — otherwise the doc has content
     // but never a doc-index entry, so it never appears in the Shared Items tree.
-    pendingDocRegistrations.enqueue(workspacePath, { documentId, title, documentType });
+    pendingDocRegistrations.enqueue(workspacePath, {
+      documentId,
+      title,
+      documentType,
+      parentFolderId,
+    });
   }
 }
 

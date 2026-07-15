@@ -668,10 +668,12 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
             : (parentFolderId ?? null);
 
           const documentId = crypto.randomUUID();
-          await registerDocumentInIndex(documentId, title, documentType || 'markdown');
-          if (targetParentId) {
-            moveSharedDocument(documentId, targetParentId);
-          }
+          await registerDocumentInIndex(
+            documentId,
+            title,
+            documentType || 'markdown',
+            targetParentId,
+          );
 
           // Best-effort content seed: only possible when an editor for the doc is
           // already mounted (a Y.Doc-backed CollaborativeTabEditor). A freshly

@@ -9,18 +9,18 @@ const WS = '/workspace/a';
 const WS2 = '/workspace/b';
 
 function reg(documentId: string, title = documentId): PendingDocRegistration {
-  return { documentId, title, documentType: 'markdown' };
+  return { documentId, title, documentType: 'markdown', parentFolderId: 'folder-1' };
 }
 
 /** A sink that records calls; optionally fails for specific documentIds. */
 function makeSink(failIds: Set<string> = new Set()): DocRegistrationSink & {
-  calls: Array<{ documentId: string; title: string; documentType: string }>;
+  calls: Array<{ documentId: string; title: string; documentType: string; parentFolderId: string | null }>;
 } {
-  const calls: Array<{ documentId: string; title: string; documentType: string }> = [];
+  const calls: Array<{ documentId: string; title: string; documentType: string; parentFolderId: string | null }> = [];
   return {
     calls,
-    async registerDocument(documentId, title, documentType) {
-      calls.push({ documentId, title, documentType });
+    async registerDocument(documentId, title, documentType, parentFolderId) {
+      calls.push({ documentId, title, documentType, parentFolderId });
       if (failIds.has(documentId)) throw new Error(`register failed for ${documentId}`);
     },
   };
@@ -37,7 +37,12 @@ describe('PendingDocRegistrationQueue', () => {
     const q = new PendingDocRegistrationQueue();
     q.enqueue(WS, reg('d1', 'first'));
     q.enqueue(WS, reg('d1', 'second'));
-    expect(q.list(WS)).toEqual([{ documentId: 'd1', title: 'second', documentType: 'markdown' }]);
+    expect(q.list(WS)).toEqual([{
+      documentId: 'd1',
+      title: 'second',
+      documentType: 'markdown',
+      parentFolderId: 'folder-1',
+    }]);
   });
 
   it('keeps queues isolated per workspace', () => {

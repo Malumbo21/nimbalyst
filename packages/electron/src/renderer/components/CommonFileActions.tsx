@@ -57,7 +57,11 @@ export function CommonFileActions({
     () => deriveCollabDocumentType(fileName, customEditorRegistry),
     [fileName]
   );
-  const runShareToTeam = useCallback(async (folderPath: string, sharedName: string) => {
+  const runShareToTeam = useCallback(async (
+    folderId: string | null,
+    folderPath: string,
+    sharedName: string,
+  ) => {
     const { errorNotificationService } = await import('../services/ErrorNotificationService');
 
     if (!collabDocumentType) {
@@ -213,7 +217,7 @@ export function CommonFileActions({
 
     // Register in the doc index (optimistic local update is synchronous,
     // server registration happens in background)
-    registerDocumentInIndex(documentId, shareTitle, documentType).catch(error => {
+    registerDocumentInIndex(documentId, shareTitle, documentType, folderId).catch(error => {
       console.error('Failed to register document in index:', error);
     });
 
@@ -242,7 +246,12 @@ export function CommonFileActions({
     // Remember the destination folder so the next share defaults to it.
     if (workspacePath && window.electronAPI?.invoke) {
       window.electronAPI.invoke('workspace:update-state', workspacePath, {
-        collabTree: { lastSharedFolder: normalizedFolder },
+        collabTree: {
+          lastSharedFolderId: folderId,
+          // Keep the path during migration so older clients retain their
+          // last-used destination behavior.
+          lastSharedFolder: normalizedFolder,
+        },
       }).catch((error: unknown) => {
         console.warn('[CommonFileActions] Failed to persist lastSharedFolder:', error);
       });
@@ -299,8 +308,8 @@ export function CommonFileActions({
     dialogRef.current?.open<ShareToTeamData>(DIALOG_IDS.SHARE_TO_TEAM, {
       fileName,
       sourceRelPath,
-      onConfirm: ({ folderPath, sharedName }) => {
-        runShareToTeam(folderPath, sharedName);
+      onConfirm: ({ folderId, folderPath, sharedName }) => {
+        runShareToTeam(folderId, folderPath, sharedName);
       },
     });
   }, [filePath, fileName, runShareToTeam]);

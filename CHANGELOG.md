@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Share to Team now refreshes its folder picker when opened, so newly created, renamed, or moved shared folders appear immediately.
 - Shared documents no longer disappear from the collaboration folder tree during sync or reconnect.
 - Shared document and folder names no longer briefly go blank in the collaboration folder tree during sync or reconnect.
 - Images pasted into a shared document from a web browser now persist after a refresh instead of disappearing.

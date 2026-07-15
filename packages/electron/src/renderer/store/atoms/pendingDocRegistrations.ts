@@ -20,11 +20,17 @@ export interface PendingDocRegistration {
   documentId: string;
   title: string;
   documentType: string;
+  parentFolderId: string | null;
 }
 
 /** The minimal provider surface the queue needs to flush a registration. */
 export interface DocRegistrationSink {
-  registerDocument(documentId: string, title: string, documentType: string): Promise<void>;
+  registerDocument(
+    documentId: string,
+    title: string,
+    documentType: string,
+    parentFolderId: string | null,
+  ): Promise<void>;
 }
 
 export interface FlushResult {
@@ -74,7 +80,12 @@ export class PendingDocRegistrationQueue {
     const failed: PendingDocRegistration[] = [];
     for (const registration of pending) {
       try {
-        await sink.registerDocument(registration.documentId, registration.title, registration.documentType);
+        await sink.registerDocument(
+          registration.documentId,
+          registration.title,
+          registration.documentType,
+          registration.parentFolderId,
+        );
         flushed++;
       } catch (err) {
         console.warn('[pendingDocRegistrations] flush failed for', registration.documentId, err);
