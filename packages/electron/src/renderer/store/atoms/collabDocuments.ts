@@ -83,6 +83,45 @@ function mapFolderNode(f: FolderNode): SharedFolder {
   };
 }
 
+/**
+ * NIM-1638: reconcile a full-sync ("loaded") snapshot against the rows we
+ * already have WITHOUT dropping anything the snapshot happens to omit.
+ *
+ * A `docIndexSync` / `folderIndexSync` response is fired on every (re)connect
+ * and was previously used to wholesale-REPLACE the index. When such a response
+ * arrives empty or partial (transient server state, a project-partition race,
+ * a decrypt-to-empty pass), the wholesale replace blanked real rows out of the
+ * sidebar tree — shared docs like "latest meeting" would simply vanish.
+ *
+ * Instead we merge by id: the incoming snapshot WINS for any row it contains
+ * (fresh titles, moved parents), and any locally-known row the snapshot omits
+ * is RESTORED rather than left missing. Genuine removals still flow through the
+ * explicit remove callbacks (`onDocumentRemoved` / `onFoldersRemoved`), which
+ * are the only paths that shrink the set. Incoming order is preserved, with any
+ * surviving local-only rows appended.
+ */
+function reconcileById<T>(existing: T[], incoming: T[], getId: (row: T) => string): T[] {
+  const incomingIds = new Set(incoming.map(getId));
+  const survivors = existing.filter(row => !incomingIds.has(getId(row)));
+  return [...incoming, ...survivors];
+}
+
+/** Reconcile a full-sync document snapshot without dropping known rows (NIM-1638). */
+export function reconcileSharedDocuments(
+  existing: SharedDocument[],
+  incoming: SharedDocument[],
+): SharedDocument[] {
+  return reconcileById(existing, incoming, d => d.documentId);
+}
+
+/** Reconcile a full-sync folder snapshot without dropping known rows (NIM-1638). */
+export function reconcileSharedFolders(
+  existing: SharedFolder[],
+  incoming: SharedFolder[],
+): SharedFolder[] {
+  return reconcileById(existing, incoming, f => f.folderId);
+}
+
 // ============================================================
 // Per-workspace atom families
 // ============================================================
@@ -873,7 +912,7 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
 
       onTeamStateLoaded: (state) => {
         if (state.documents.length > 0) {
-          store.set(sharedDocumentsAtomFamily(workspacePath), state.documents.map(d => ({
+          const incoming = state.documents.map(d => ({
             documentId: d.documentId,
             title: d.title,
             documentType: d.documentType,
@@ -883,13 +922,21 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
             lastWriterUserId: d.lastWriterUserId,
             parentFolderId: d.parentFolderId,
             decryptFailed: d.decryptFailed,
-          })));
+          }));
+          // NIM-1638: reconcile rather than replace so a partial teamSync
+          // snapshot never blanks known rows.
+          store.set(sharedDocumentsAtomFamily(workspacePath), (current) =>
+            reconcileSharedDocuments(current, incoming)
+          );
         }
-        store.set(sharedFoldersAtomFamily(workspacePath), state.folders.map(mapFolderNode));
+        const incomingFolders = state.folders.map(mapFolderNode);
+        store.set(sharedFoldersAtomFamily(workspacePath), (current) =>
+          reconcileSharedFolders(current, incomingFolders)
+        );
       },
 
       onDocumentsLoaded: (documents) => {
-        store.set(sharedDocumentsAtomFamily(workspacePath), documents.map(d => ({
+        const incoming = documents.map(d => ({
           documentId: d.documentId,
           title: d.title,
           documentType: d.documentType,
@@ -899,7 +946,13 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
           lastWriterUserId: d.lastWriterUserId,
           parentFolderId: d.parentFolderId,
           decryptFailed: d.decryptFailed,
-        })));
+        }));
+        // NIM-1638: a docIndexSync response fires on every (re)connect and used
+        // to wholesale-replace the list; an empty/partial one blanked the tree.
+        // Reconcile so briefly-dropped docs are restored, never left missing.
+        store.set(sharedDocumentsAtomFamily(workspacePath), (current) =>
+          reconcileSharedDocuments(current, incoming)
+        );
         // One-time client-driven migration of legacy path-in-title folders into
         // first-class folder rows (idempotent, dual-write; no-op once migrated).
         void migrateVirtualFolders(workspacePath, orgId);
@@ -929,7 +982,12 @@ export async function initSharedDocuments(workspacePath: string, retryCount = 0)
       },
 
       onFoldersLoaded: (folders) => {
-        store.set(sharedFoldersAtomFamily(workspacePath), folders.map(mapFolderNode));
+        const incoming = folders.map(mapFolderNode);
+        // NIM-1638: reconcile rather than replace so an empty/partial
+        // folderIndexSync (fired on every reconnect) never wipes the tree.
+        store.set(sharedFoldersAtomFamily(workspacePath), (current) =>
+          reconcileSharedFolders(current, incoming)
+        );
       },
 
       onFolderChanged: (folder) => {
