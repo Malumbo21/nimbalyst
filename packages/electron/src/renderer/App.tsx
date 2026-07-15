@@ -25,6 +25,7 @@ import { useOnboarding } from './hooks/useOnboarding';
 // NOTE: useDocumentContext removed - we build documentContext manually now
 import { handleWorkspaceFileSelect as handleWorkspaceFileSelectUtil } from './utils/workspaceFileOperations';
 import { createInitialFileContent } from './utils/fileUtils';
+import { resolveHistoryDocumentPath } from './utils/historyDocumentResolver';
 import { aiToolService } from './services/AIToolService';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
 import { WorkspaceWelcome } from './components/WorkspaceWelcome.tsx';
@@ -854,6 +855,21 @@ export default function App() {
   const editorModeRef = useRef<EditorModeRef>(null);
   const collabModeRef = useRef<CollabModeRef | null>(null);
 
+  const openHistoryForCurrentDocument = useCallback(() => {
+    const mode = activeModeStateRef.current;
+    const documentPath = resolveHistoryDocumentPath({
+      activeMode: mode,
+      localDocumentPath: (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath,
+      collabDocumentPath: mode === 'collab'
+        ? collabModeRef.current?.getActiveDocumentPath() ?? null
+        : null,
+    });
+
+    if (documentPath) {
+      store.set(historyDialogFileAtom, documentPath);
+    }
+  }, []);
+
   // NOTE: autoSaveIntervalRef and autoSaveCancellationRef removed - EditorContainer handles autosave now
   const activeSavesRef = useRef<Set<string>>(new Set());
   const lastSavePathRef = useRef<string | null>(null);
@@ -1437,6 +1453,7 @@ export default function App() {
     editorModeRef,
     agentModeRef,
     toggleAgentCollapsed,
+    openHistoryForCurrentDocument,
     isFullscreenPanelActive,
     exitFullscreenPanel: () => setActiveExtensionPanel(null),
   });
@@ -1974,18 +1991,12 @@ export default function App() {
   // view-history IPC fires when the user picks Edit > View Local History (Cmd+Y).
   // On macOS, the menu accelerator preempts the renderer keydown event, so the
   // IPC path is the canonical one. Open the global history dialog for whichever
-  // file is currently active (FilesMode or AgentMode -- both modes maintain
-  // window.__currentDocumentPath as the active file).
-  const setHistoryDialogFile = useSetAtom(historyDialogFileAtom);
+  // document is currently active. Shared Documents resolves its active
+  // collab:// URI through CollabMode instead of the filesystem-path global.
   useEffect(() => {
     if (!window.electronAPI?.onViewHistory) return undefined;
-    return window.electronAPI.onViewHistory(() => {
-      const activeFilePath = (window as unknown as { __currentDocumentPath?: string | null }).__currentDocumentPath;
-      if (activeFilePath) {
-        setHistoryDialogFile(activeFilePath);
-      }
-    });
-  }, [setHistoryDialogFile]);
+    return window.electronAPI.onViewHistory(openHistoryForCurrentDocument);
+  }, [openHistoryForCurrentDocument]);
 
   // Intercept external link clicks and open in default browser
   useEffect(() => {

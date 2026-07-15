@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared documents no longer disappear from the collaboration folder tree during sync or reconnect.
 - Shared document and folder names no longer briefly go blank in the collaboration folder tree during sync or reconnect.
 - Images pasted into a shared document from a web browser now persist after a refresh instead of disappearing.
+- Cmd+Y now opens history for the currently focused shared document instead of the last local document.
 
 ### Removed
 <!-- Removed features go here -->
