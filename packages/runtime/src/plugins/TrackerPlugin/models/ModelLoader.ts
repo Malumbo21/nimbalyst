@@ -300,6 +300,7 @@ const builtinTrackers: TrackerDataModel[] = [
           { value: 'in-progress', label: 'In Progress', icon: 'motion_photos_on' },
           { value: 'in-review', label: 'In Review', icon: 'rate_review', color: '#3b82f6' },
           { value: 'done', label: 'Done', icon: 'check_circle' },
+          { value: 'wont-do', label: "Won't Do", icon: 'do_not_disturb_on', color: '#64748b' },
         ],
       },
       {

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared document and folder creation now lets you choose any shared folder or Root as the destination.
 - Create diagrams, data models, spreadsheets, mockups, and more directly as shared documents.
 - Shared documents now have a recoverable Trash with empty-document cleanup, restore, manual purge, and automatic 30-day removal.
+- Feature tracker items now have a "Won't Do" status for work decided against.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
