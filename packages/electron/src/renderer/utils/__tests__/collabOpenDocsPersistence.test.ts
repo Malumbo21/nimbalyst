@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getPersistedCollabDocType,
+  getPersistedCollabDocMetadata,
   loadOpenCollabDocs,
   persistOpenCollabDocs,
   readEntriesFromState,
@@ -19,7 +20,14 @@ import {
 
 interface MockState {
   openCollabDocumentIds?: string[];
-  openCollabDocumentEntries?: Array<{ documentId: string; documentType: string; displayPath?: string }>;
+  openCollabDocumentEntries?: Array<{
+    documentId: string;
+    documentType: string;
+    displayPath?: string;
+    metadataVersion?: 2;
+    fileExtension?: string;
+    editorId?: string;
+  }>;
 }
 
 function installMockElectronAPI(initialState: MockState = {}) {
@@ -61,6 +69,21 @@ describe('collabOpenDocsPersistence', () => {
     expect(loaded).toEqual(entries);
     // The legacy id list is also written for one release of downgrade safety.
     expect(harness.getState().openCollabDocumentIds).toEqual(['doc-1', 'doc-2']);
+  });
+
+  it('restores explicit V2 metadata for a non-markdown opener route', async () => {
+    const entry = {
+      documentId: 'drawing-1',
+      documentType: 'excalidraw',
+      metadataVersion: 2 as const,
+      fileExtension: '.excalidraw',
+      editorId: 'com.nimbalyst.excalidraw',
+    };
+    installMockElectronAPI({ openCollabDocumentEntries: [entry] });
+
+    expect(await getPersistedCollabDocMetadata('/ws', 'drawing-1')).toEqual(entry);
+    expect((await getPersistedCollabDocMetadata('/ws', 'drawing-1'))?.documentType)
+      .not.toBe('markdown');
   });
 
   it('round-trips the last-known shared document path for title-safe restore', async () => {

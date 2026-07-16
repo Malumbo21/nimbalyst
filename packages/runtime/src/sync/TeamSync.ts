@@ -39,6 +39,7 @@ import type {
   EncryptedFolderNode,
   FolderNode,
   ServerTeamState,
+  SharedDocumentTypeMetadataV2,
 } from './teamSyncTypes';
 import type {
   InboxEventKind,
@@ -308,10 +309,12 @@ export class TeamSyncProvider {
     title: string,
     documentType: string,
     parentFolderId: string | null = null,
+    metadata?: SharedDocumentTypeMetadataV2,
   ): Promise<void> {
     const { encryptedTitle, titleIv } = await this.encodeTitleForWire(title);
     this.send({
       type: 'docIndexRegister', documentId, encryptedTitle, titleIv, documentType,
+      ...metadata,
       // Epic H3 P0/A: attribute the doc to the active project so the server's
       // project-partitioned doc index (and a future move) can scope it.
       projectId: this.config.teamProjectId ?? null,

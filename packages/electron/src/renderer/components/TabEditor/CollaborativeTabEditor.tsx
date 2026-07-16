@@ -1088,13 +1088,15 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
     // `MyDrawing.excalidraw`). Falls back to `<title>.<documentType>` so
     // recipients of a doc shared with a bare title still get routed to
     // the right editor.
-    const lookupName =
-      fileName.includes('.') ? fileName : `${activeConfig.title}.${documentType}`;
+    const lookupName = activeConfig.fileExtension
+      ? `document${activeConfig.fileExtension}`
+      : fileName.includes('.') ? fileName : `${activeConfig.title}.${documentType}`;
     const match = customEditorRegistry.findRegistrationForFile(lookupName);
     if (!match) return null;
+    if (activeConfig.editorId && match.extensionId !== activeConfig.editorId) return null;
     if (!match.collaboration?.supported) return null;
     return match;
-  }, [documentType, fileName, activeConfig.title]);
+  }, [documentType, fileName, activeConfig.editorId, activeConfig.fileExtension, activeConfig.title]);
   // Manual resync ("Re-upload to Shared Doc"). For an OPEN custom-editor collab
   // doc we MUST write through the live renderer connection: the default IPC
   // path opens a throwaway main-process provider that connects -> writes ->

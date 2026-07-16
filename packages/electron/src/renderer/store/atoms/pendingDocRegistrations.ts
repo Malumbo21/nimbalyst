@@ -21,6 +21,9 @@ export interface PendingDocRegistration {
   title: string;
   documentType: string;
   parentFolderId: string | null;
+  metadataVersion?: 2;
+  fileExtension?: string;
+  editorId?: string;
 }
 
 /** The minimal provider surface the queue needs to flush a registration. */
@@ -30,6 +33,7 @@ export interface DocRegistrationSink {
     title: string,
     documentType: string,
     parentFolderId: string | null,
+    metadata?: { metadataVersion: 2; fileExtension: string; editorId: string },
   ): Promise<void>;
 }
 
@@ -85,6 +89,13 @@ export class PendingDocRegistrationQueue {
           registration.title,
           registration.documentType,
           registration.parentFolderId,
+          registration.metadataVersion === 2 && registration.fileExtension && registration.editorId
+            ? {
+                metadataVersion: 2,
+                fileExtension: registration.fileExtension,
+                editorId: registration.editorId,
+              }
+            : undefined,
         );
         flushed++;
       } catch (err) {

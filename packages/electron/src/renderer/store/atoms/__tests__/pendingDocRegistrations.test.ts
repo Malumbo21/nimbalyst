@@ -12,15 +12,23 @@ function reg(documentId: string, title = documentId): PendingDocRegistration {
   return { documentId, title, documentType: 'markdown', parentFolderId: 'folder-1' };
 }
 
+interface SinkCall {
+  documentId: string;
+  title: string;
+  documentType: string;
+  parentFolderId: string | null;
+  metadata?: { metadataVersion: 2; fileExtension: string; editorId: string };
+}
+
 /** A sink that records calls; optionally fails for specific documentIds. */
 function makeSink(failIds: Set<string> = new Set()): DocRegistrationSink & {
-  calls: Array<{ documentId: string; title: string; documentType: string; parentFolderId: string | null }>;
+  calls: SinkCall[];
 } {
-  const calls: Array<{ documentId: string; title: string; documentType: string; parentFolderId: string | null }> = [];
+  const calls: SinkCall[] = [];
   return {
     calls,
-    async registerDocument(documentId, title, documentType, parentFolderId) {
-      calls.push({ documentId, title, documentType, parentFolderId });
+    async registerDocument(documentId, title, documentType, parentFolderId, metadata) {
+      calls.push({ documentId, title, documentType, parentFolderId, metadata });
       if (failIds.has(documentId)) throw new Error(`register failed for ${documentId}`);
     },
   };
@@ -65,6 +73,25 @@ describe('PendingDocRegistrationQueue', () => {
     expect(result.flushed).toBe(2);
     expect(result.failed).toEqual([]);
     expect(q.list(WS)).toEqual([]);
+  });
+
+  it('retains V2 metadata while a registration waits for TeamSync', async () => {
+    const q = new PendingDocRegistrationQueue();
+    q.enqueue(WS, {
+      ...reg('v2'),
+      metadataVersion: 2,
+      fileExtension: '.mockup.html',
+      editorId: 'com.nimbalyst.mockup',
+    });
+    const sink = makeSink();
+
+    await q.flush(WS, sink);
+
+    expect(sink.calls[0]?.metadata).toEqual({
+      metadataVersion: 2,
+      fileExtension: '.mockup.html',
+      editorId: 'com.nimbalyst.mockup',
+    });
   });
 
   it('re-enqueues docs whose registration fails so a later flush retries them', async () => {

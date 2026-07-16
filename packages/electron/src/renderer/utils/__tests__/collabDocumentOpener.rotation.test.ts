@@ -78,6 +78,56 @@ describe('collab document key rotation resolution', () => {
     removeCollabConfig(displayUri);
   });
 
+  it('keeps V2 editor metadata when resolving a non-markdown config', async () => {
+    const extensionDocumentId = 'drawing-v2';
+    const extensionUri = buildCollabUri('org-a', extensionDocumentId);
+    const open = vi.fn(async () => ({
+      success: true,
+      config: {
+        orgId: 'org-a',
+        documentId: extensionDocumentId,
+        title: 'Drawing.excalidraw',
+        documentType: 'excalidraw',
+        keyCustody: 'server-managed' as const,
+        orgKeyBase64: '',
+        serverUrl: 'ws://sync',
+        accountId: 'account-a',
+        userId: 'user-a',
+      },
+    }));
+    vi.stubGlobal('window', {
+      electronAPI: {
+        documentSync: {
+          open,
+          getJwt: vi.fn(async () => ({ success: true, jwt: 'token' })),
+        },
+      },
+    });
+
+    const config = await resolveCollabConfigForUri(
+      workspacePath,
+      extensionUri,
+      extensionDocumentId,
+      'Drawing.excalidraw',
+      'excalidraw',
+      {
+        metadata: {
+          metadataVersion: 2,
+          fileExtension: '.excalidraw',
+          editorId: 'com.nimbalyst.excalidraw',
+        },
+      },
+    );
+
+    expect(config).toMatchObject({
+      documentType: 'excalidraw',
+      metadataVersion: 2,
+      fileExtension: '.excalidraw',
+      editorId: 'com.nimbalyst.excalidraw',
+    });
+    removeCollabConfig(extensionUri);
+  });
+
   it('bypasses cached aliases and decrypts with the freshly fetched key', async () => {
     const oldKeyBytes = new Uint8Array(32).fill(1);
     const newKeyBytes = new Uint8Array(32).fill(2);
@@ -90,6 +140,9 @@ describe('collab document key rotation resolution', () => {
       documentId,
       title: 'Rotating doc',
       documentType: 'markdown',
+      metadataVersion: 2,
+      fileExtension: '.md',
+      editorId: 'builtin.lexical',
       keyCustody: 'legacy-e2e',
       documentKey: oldDocumentKey,
       orgKeyFingerprint: 'fingerprint-v1',
@@ -136,6 +189,9 @@ describe('collab document key rotation resolution', () => {
     expect(refreshed).toMatchObject({
       orgKeyFingerprint: 'fingerprint-v2',
       serverUrl: 'ws://new',
+      metadataVersion: 2,
+      fileExtension: '.md',
+      editorId: 'builtin.lexical',
     });
     const encryptingKey = await crypto.subtle.importKey(
       'raw', newKeyBytes, { name: 'AES-GCM' }, false, ['encrypt'],

@@ -15,8 +15,7 @@ import { MaterialSymbol } from '@nimbalyst/runtime';
 import { store } from '@nimbalyst/runtime/store';
 import { useAtomValue } from 'jotai';
 import { useFileActions } from '../hooks/useFileActions';
-import { registerDocumentInIndex, pendingCollabDocumentAtom, workspaceHasTeamAtom } from '../store/atoms/collabDocuments';
-import { setWindowModeAtom } from '../store/atoms/windowMode';
+import { workspaceHasTeamAtom } from '../store/atoms/collabDocuments';
 import { activeWorkspacePathAtom } from '../store/atoms/openProjects';
 import { customEditorRegistry } from './CustomEditors';
 import { deriveCollabDocumentType } from '../utils/collabDocumentType';
@@ -24,6 +23,11 @@ import { getRelativePath } from '../utils/pathUtils';
 import { dialogRef, DIALOG_IDS } from '../dialogs';
 import type { ShareToTeamData } from '../dialogs';
 import { joinCollabPath, normalizeCollabPath } from './CollabMode/collabTree';
+import { getCollaborativeDocumentTypeCatalog } from '../services/CollaborativeDocumentTypeCatalog';
+import {
+  CollaborativeDocumentCreationError,
+  createCollaborativeDocument,
+} from '../services/collaborativeDocumentCreationOrchestrator';
 
 interface CommonFileActionsProps {
   filePath: string;
@@ -70,6 +74,15 @@ export function CommonFileActions({
       return;
     }
     const documentType = collabDocumentType;
+    const descriptorResolution = getCollaborativeDocumentTypeCatalog().resolveShareability(fileName);
+    if (descriptorResolution.state !== 'ready') {
+      errorNotificationService.showError(
+        'Could not share to team',
+        descriptorResolution.reason,
+      );
+      return;
+    }
+    const descriptor = descriptorResolution.descriptor;
 
     // Read file content to seed the collaborative document on first share.
     let initialContent: string | undefined;
@@ -103,14 +116,6 @@ export function CommonFileActions({
     const documentSync = window.electronAPI?.documentSync;
     let migratedContent = initialContent;
     let migrationToast: { kind: 'ok' | 'partial' | 'no-assets' | 'unavailable' | 'total-failure'; message?: string; failedCount?: number; okCount?: number } = { kind: 'no-assets' };
-
-    const hashContent = async (content: string | undefined): Promise<string | null> => {
-      if (typeof content !== 'string') return null;
-      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content));
-      return Array.from(new Uint8Array(digest))
-        .map(byte => byte.toString(16).padStart(2, '0'))
-        .join('');
-    };
 
     if (
       documentType === 'markdown' &&
@@ -177,71 +182,32 @@ export function CommonFileActions({
       return;
     }
 
-    // Seed the room before the doc is announced in the shared-doc index.
-    // Otherwise a teammate can open the link before the sharer’s auto-open
-    // tab writes the first Yjs update, and they see an empty doc.
-    //
-    // The seeding orchestrator owns the strategy order (renderer-headless codec
-    // -> main adapter). It works for EXTERNAL, STRUCTURED editors (mindmap)
-    // that can supply a renderer codec but no main-process adapter -- the case
-    // that used to throw "No collab content adapter is registered". Warn
-    // whenever the pre-announcement seed is not confirmed. A renderer
-    // codec means the auto-open tab can retry, but that retry has its own
-    // server-ack failure path; suppressing this warning made blank-room seed
-    // failures silent for external structured editors.
-    let seedError: string | null = null;
-    if (workspacePath && typeof migratedContent === 'string') {
-      const { seedSharedDocument } = await import('../utils/documentSeedOrchestrator');
-      const seedResult = await seedSharedDocument({
-        workspacePath,
-        documentId,
-        documentType,
-        title: shareTitle,
-        content: migratedContent,
-      });
-      if (!seedResult.ok) {
-        seedError =
-          seedResult.error ||
-          (seedResult.hasRendererCodec
-            ? 'The renderer codec is available, but the initial shared content was not confirmed by the server before registration.'
-            : 'No collaborative codec is available to write this document type into the shared room.');
-        console.warn('[ShareToTeam] Seed did not confirm before registration:', {
-          documentId,
-          documentType,
-          strategy: seedResult.strategy,
-          hasRendererCodec: seedResult.hasRendererCodec,
-          error: seedResult.error,
-        });
-      }
-    }
-
-    // Register in the doc index (optimistic local update is synchronous,
-    // server registration happens in background)
-    registerDocumentInIndex(documentId, shareTitle, documentType, folderId).catch(error => {
-      console.error('Failed to register document in index:', error);
-    });
-
-    // Set the pending document so CollabMode auto-opens it (with content for seeding)
-    store.set(pendingCollabDocumentAtom, {
-      documentId,
-      initialContent: migratedContent,
-      documentType,
-    });
-
-    if (workspacePath && documentSync?.saveLocalOrigin) {
-      try {
-        await documentSync.saveLocalOrigin({
-          workspacePath,
-          documentId,
-          documentType,
+    let createdDocument;
+    try {
+      createdDocument = await createCollaborativeDocument({
+        descriptor,
+        requestedName: trimmedName,
+        parentFolderId: folderId,
+        sourceContent: migratedContent ?? '',
+        localOrigin: {
           sourceFilePath: filePath,
-          lastLocalContentHash: await hashContent(initialContent),
-          lastCollabContentHash: await hashContent(migratedContent),
-        });
-      } catch (error) {
-        console.warn('[CommonFileActions] Failed to save local origin binding:', error);
-      }
+          sourceContent: initialContent ?? '',
+        },
+        operationId: documentId,
+        documentId,
+      });
+    } catch (error) {
+      const details = error instanceof CollaborativeDocumentCreationError
+        ? `${error.code} (document ${error.documentId})`
+        : undefined;
+      errorNotificationService.showError(
+        'Could not share to team',
+        error instanceof Error ? error.message : String(error),
+        { details, duration: 10000 },
+      );
+      return;
     }
+    const finalTitle = createdDocument.title;
 
     // Remember the destination folder so the next share defaults to it.
     if (workspacePath && window.electronAPI?.invoke) {
@@ -257,37 +223,25 @@ export function CommonFileActions({
       });
     }
 
-    // Switch to collab mode immediately
-    store.set(setWindowModeAtom, 'collab');
-
-    if (seedError) {
-      errorNotificationService.showWarning(
-        'Shared with pending seed',
-        `"${shareTitle}" was shared, but its initial content could not be written to the shared room yet. Teammates may see a blank doc until it is reopened or re-uploaded.`,
-        { details: seedError, duration: 10000 },
-      );
-      return;
-    }
-
     switch (migrationToast.kind) {
       case 'ok':
         errorNotificationService.showInfo(
           'Shared to team',
-          `"${shareTitle}" is now a collaborative document. Migrated ${migrationToast.okCount} attachment${migrationToast.okCount === 1 ? '' : 's'}.`,
+          `"${finalTitle}" is now a collaborative document. Migrated ${migrationToast.okCount} attachment${migrationToast.okCount === 1 ? '' : 's'}.`,
           { duration: 4000 },
         );
         break;
       case 'partial':
         errorNotificationService.showWarning(
           'Shared with missing attachments',
-          `"${shareTitle}" was shared but ${migrationToast.failedCount} attachment${migrationToast.failedCount === 1 ? '' : 's'} failed to upload.`,
+          `"${finalTitle}" was shared but ${migrationToast.failedCount} attachment${migrationToast.failedCount === 1 ? '' : 's'} failed to upload.`,
           { duration: 8000 },
         );
         break;
       case 'unavailable':
         errorNotificationService.showWarning(
           'Shared to team',
-          `"${shareTitle}" is now collaborative, but image attachments could not be migrated${migrationToast.message ? `: ${migrationToast.message}` : '.'}`,
+          `"${finalTitle}" is now collaborative, but image attachments could not be migrated${migrationToast.message ? `: ${migrationToast.message}` : '.'}`,
           { duration: 8000 },
         );
         break;
@@ -295,7 +249,7 @@ export function CommonFileActions({
       default:
         errorNotificationService.showInfo(
           'Shared to team',
-          `"${shareTitle}" is now a collaborative document.`,
+          `"${finalTitle}" is now a collaborative document.`,
           { duration: 4000 },
         );
         break;

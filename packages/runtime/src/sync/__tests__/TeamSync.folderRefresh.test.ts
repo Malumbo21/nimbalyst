@@ -71,4 +71,24 @@ describe('TeamSyncProvider folder refresh', () => {
     ]);
     provider.destroy();
   });
+
+  it('writes explicit V2 document type metadata on registration', async () => {
+    const provider = createProvider();
+    const sent: Array<Record<string, unknown>> = [];
+    (provider as any).send = (message: Record<string, unknown>) => sent.push(message);
+
+    await provider.registerDocument('doc-v2', 'Sketch.excalidraw', 'excalidraw', null, {
+      metadataVersion: 2,
+      fileExtension: '.excalidraw',
+      editorId: 'com.nimbalyst.excalidraw',
+    });
+
+    expect(sent[0]).toMatchObject({
+      type: 'docIndexRegister',
+      metadataVersion: 2,
+      fileExtension: '.excalidraw',
+      editorId: 'com.nimbalyst.excalidraw',
+    });
+    provider.destroy();
+  });
 });

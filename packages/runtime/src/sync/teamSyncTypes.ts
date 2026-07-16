@@ -255,6 +255,15 @@ export interface DocIndexEntry {
   decryptFailed?: boolean;
 }
 
+/** Explicit type metadata written by V2 shared-document creators. */
+export interface SharedDocumentTypeMetadataV2 {
+  metadataVersion: 2;
+  /** Exact normalized suffix, including the leading dot. */
+  fileExtension: string;
+  /** Stable owning editor id (built-in or extension id). */
+  editorId: string;
+}
+
 /** Decrypted folder node for UI consumption (first-class folders). */
 export interface FolderNode {
   folderId: string;

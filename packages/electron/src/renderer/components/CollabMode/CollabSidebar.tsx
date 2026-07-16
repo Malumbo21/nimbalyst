@@ -41,7 +41,6 @@ import {
   resolveCollabCreateTargetFolderId,
   type CollabTreeNode,
 } from './collabTree';
-import { registerDocumentInIndex } from '../../store/atoms/collabDocuments';
 import { useCollabLocalOrigin } from '../../hooks/useCollabLocalOrigin';
 import { useSetAtom } from 'jotai';
 import { historyDialogFileAtom } from '../../store/atoms/historyDialog';
@@ -59,6 +58,7 @@ import {
 } from '../../store/atoms/collabDiscovery';
 import { getCollaborativeDocumentTypeCatalog } from '../../services/CollaborativeDocumentTypeCatalog';
 import { resolveSharedDocumentTypePresentation } from '../../utils/sharedDocumentTypeMetadata';
+import { createCollaborativeDocument } from '../../services/collaborativeDocumentCreationOrchestrator';
 
 // ---------------------------------------------------------------------------
 // TeamSync status indicator -- shown in the header subtitle slot
@@ -623,32 +623,27 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
 
   const handleCreateDocument = useCallback(async (documentName: string) => {
     if (!canMutateMetadata('create documents')) return;
-    const name = documentName.trim();
-    if (!name) return;
-
     const parentId = createTargetFolderId;
     const parentPath = parentId ? (folderPathById.get(parentId) ?? '') : '';
-    // Dual-write: the title carries the full path so un-upgraded clients still
-    // render the tree, while parentFolderId is the authoritative placement.
-    const title = joinCollabPath(parentPath, name);
-    if (existingPaths.has(title)) {
-      window.alert(`A document or folder named "${title}" already exists.`);
+    const markdown = documentTypeCatalog.resolveMetadata('markdown', '.md', 'builtin.lexical');
+    if (markdown.state !== 'ready') {
+      errorNotificationService.showError('Could not create shared document', markdown.reason);
       return;
     }
-
-    const now = Date.now();
-    const documentId = crypto.randomUUID();
-    const document: SharedDocument = {
-      documentId,
-      title,
-      documentType: 'markdown',
-      createdBy: '',
-      createdAt: now,
-      updatedAt: now,
-      parentFolderId: parentId,
-    };
-
-    await registerDocumentInIndex(documentId, title, 'markdown', parentId);
+    try {
+      await createCollaborativeDocument({
+        descriptor: markdown.descriptor,
+        requestedName: documentName,
+        parentFolderId: parentId,
+        sourceContent: '',
+      });
+    } catch (error) {
+      errorNotificationService.showError(
+        'Could not create shared document',
+        error instanceof Error ? error.message : String(error),
+      );
+      return;
+    }
 
     if (parentPath) {
       setExpandedFolders((currentFolders) => {
@@ -662,8 +657,7 @@ export const CollabSidebar: React.FC<CollabSidebarProps> = ({
     setSelectedFolderId(parentId);
     setIsCreateDocumentOpen(false);
     setContextMenu(null);
-    onDocumentSelect(document);
-  }, [canMutateMetadata, createTargetFolderId, existingPaths, folderPathById, onDocumentSelect]);
+  }, [canMutateMetadata, createTargetFolderId, documentTypeCatalog, folderPathById]);
 
   const handleRenameDocument = useCallback(async (documentName: string) => {
     if (!documentToRename) return;

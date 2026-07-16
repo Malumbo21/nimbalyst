@@ -381,6 +381,10 @@ export interface PendingCollabDocument {
    * so the recipient can route to the right editor on first open.
    */
   documentType?: string;
+  /** Explicit V2 metadata for first-open and restart-safe editor routing. */
+  metadataVersion?: 2;
+  fileExtension?: string;
+  editorId?: string;
 }
 export const pendingCollabDocumentAtom = atom<PendingCollabDocument | null>(null);
 
@@ -455,6 +459,7 @@ export async function registerDocumentInIndex(
   title: string,
   documentType: string = 'markdown',
   parentFolderId: string | null = null,
+  metadata?: { metadataVersion: 2; fileExtension: string; editorId: string },
 ): Promise<void> {
   const now = Date.now();
   store.set(sharedDocumentsAtom, (current) => {
@@ -463,6 +468,7 @@ export async function registerDocumentInIndex(
       documentId,
       title,
       documentType,
+      ...metadata,
       createdBy: '',
       createdAt: now,
       updatedAt: now,
@@ -474,7 +480,7 @@ export async function registerDocumentInIndex(
   const workspacePath = store.get(activeWorkspacePathAtom);
   if (provider) {
     try {
-      await provider.registerDocument(documentId, title, documentType, parentFolderId);
+      await provider.registerDocument(documentId, title, documentType, parentFolderId, metadata);
     } catch (err) {
       // NIM-1565: a failed send used to vanish (fire-and-forget). Queue it so
       // the next provider connect retries, instead of orphaning the doc.
@@ -485,6 +491,7 @@ export async function registerDocumentInIndex(
           title,
           documentType,
           parentFolderId,
+          ...metadata,
         });
       }
     }
@@ -498,6 +505,7 @@ export async function registerDocumentInIndex(
       title,
       documentType,
       parentFolderId,
+      ...metadata,
     });
   }
 }

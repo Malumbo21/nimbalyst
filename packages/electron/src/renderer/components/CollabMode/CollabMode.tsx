@@ -392,6 +392,9 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
         title: doc.title,
         displayPath: getSharedDocumentDisplayPath(doc, sharedFolders),
         documentType: doc.documentType,
+        metadataVersion: doc.metadataVersion,
+        fileExtension: doc.fileExtension,
+        editorId: doc.editorId,
         initialContent,
         addTab: tabsActions.addTab,
       });
@@ -485,6 +488,9 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
           return {
             documentId,
             documentType: document?.documentType ?? 'markdown',
+            metadataVersion: document?.metadataVersion,
+            fileExtension: document?.fileExtension,
+            editorId: document?.editorId,
             displayPath,
           };
         } catch {
@@ -518,6 +524,9 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
             title: entry.displayPath ? getCollabNodeName(entry.displayPath) : undefined,
             displayPath: entry.displayPath,
             documentType: entry.documentType,
+            metadataVersion: entry.metadataVersion,
+            fileExtension: entry.fileExtension,
+            editorId: entry.editorId,
             addTab: tabsActions.addTab,
           });
         } catch (err) {
@@ -543,11 +552,22 @@ const CollabModeInner = forwardRef<CollabModeRef, CollabModeProps>(function Coll
     // Prefer the synced doc (it has the canonical title), but fall back to
     // a synthetic doc so cold-start deep links still open immediately.
     const docToOpen: SharedDocument = found
-      ? (pendingDoc.documentType ? { ...found, documentType: pendingDoc.documentType } : found)
+      ? {
+          ...found,
+          ...(pendingDoc.documentType ? { documentType: pendingDoc.documentType } : {}),
+          ...(pendingDoc.metadataVersion === 2 ? {
+            metadataVersion: 2 as const,
+            fileExtension: pendingDoc.fileExtension,
+            editorId: pendingDoc.editorId,
+          } : {}),
+        }
       : {
           documentId: pendingDoc.documentId,
           title: '',
           documentType: pendingDoc.documentType ?? 'markdown',
+          metadataVersion: pendingDoc.metadataVersion,
+          fileExtension: pendingDoc.fileExtension,
+          editorId: pendingDoc.editorId,
           createdBy: '',
           createdAt: Date.now(),
           updatedAt: Date.now(),

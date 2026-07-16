@@ -76,6 +76,10 @@ export interface CollabDocumentConfig {
    * for existing shared docs created before the type field existed.
    */
   documentType?: string;
+  /** Explicit V2 type metadata retained across create/open/restore. */
+  metadataVersion?: 2;
+  fileExtension?: string;
+  editorId?: string;
   /**
    * Factory for creating WebSocket connections.
    * When running in Electron, this proxies WebSocket connections through
@@ -123,6 +127,18 @@ export function updateCollabConfigDisplayMetadata(
  */
 export function removeCollabConfig(uri: string): void {
   collabConfigRegistry.delete(uri);
+}
+
+/** Remove every synthetic/real URI alias created for one document. */
+export function removeCollabConfigsForDocument(
+  workspacePath: string,
+  documentId: string,
+): void {
+  for (const [uri, config] of collabConfigRegistry) {
+    if (config.workspacePath === workspacePath && config.documentId === documentId) {
+      collabConfigRegistry.delete(uri);
+    }
+  }
 }
 
 /**
@@ -412,9 +428,13 @@ export async function resolveCollabConfigForUri(
   documentId: string,
   title?: string,
   documentType?: string,
-  options: { forceRefresh?: boolean } = {},
+  options: {
+    forceRefresh?: boolean;
+    metadata?: { metadataVersion: 2; fileExtension: string; editorId: string };
+  } = {},
 ): Promise<CollabDocumentConfig | null> {
   if (!window.electronAPI?.documentSync) return null;
+  let resolvedMetadata = options.metadata;
 
   if (options.forceRefresh) {
     // Key rotation must bypass both URI and document-id aliases. Otherwise a
@@ -424,19 +444,37 @@ export async function resolveCollabConfigForUri(
         config.workspacePath === workspacePath &&
         config.documentId === documentId
       ) {
+        if (
+          !resolvedMetadata
+          && config.metadataVersion === 2
+          && config.fileExtension
+          && config.editorId
+        ) {
+          resolvedMetadata = {
+            metadataVersion: 2,
+            fileExtension: config.fileExtension,
+            editorId: config.editorId,
+          };
+        }
         collabConfigRegistry.delete(registeredUri);
       }
     }
   } else {
     // Already resolved
     const existing = collabConfigRegistry.get(uri);
-    if (existing) return existing;
+    if (existing) {
+      if (resolvedMetadata) Object.assign(existing, resolvedMetadata);
+      return existing;
+    }
 
     // A seed/export/re-upload caller may only know the documentId (its URI is
     // `collab://seed/<documentId>`); reuse the config resolved when the doc was
     // opened rather than re-running the IPC resolution.
     const byDocument = findCollabConfigByDocumentId(workspacePath, documentId);
-    if (byDocument) return byDocument;
+    if (byDocument) {
+      if (resolvedMetadata) Object.assign(byDocument, resolvedMetadata);
+      return byDocument;
+    }
   }
 
   try {
@@ -470,6 +508,7 @@ export async function resolveCollabConfigForUri(
       documentId,
       title: resolvedTitle,
       documentType: resolvedDocumentType,
+      ...resolvedMetadata,
       keyCustody: serverManaged ? 'server-managed' : 'legacy-e2e',
       documentKey,
       legacyDocumentKey: legacyDocumentKeys[0],
@@ -527,6 +566,9 @@ export async function openCollabDocumentViaIPC(options: {
    * right editor branch (default: 'markdown' if omitted).
    */
   documentType?: string;
+  metadataVersion?: 2;
+  fileExtension?: string;
+  editorId?: string;
   addTab: (filePath: string, content?: string, switchToTab?: boolean, displayName?: string) => string | null;
 }): Promise<string> {
   if (!window.electronAPI?.documentSync) {
@@ -573,6 +615,9 @@ export async function openCollabDocumentViaIPC(options: {
       options.title && options.title !== documentId ? options.title : undefined
     ),
     documentType,
+    metadataVersion: options.metadataVersion,
+    fileExtension: options.fileExtension,
+    editorId: options.editorId,
     keyCustody: serverManaged ? 'server-managed' : 'legacy-e2e',
     documentKey,
     legacyDocumentKey: legacyDocumentKeys[0],
