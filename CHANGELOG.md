@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- CLI: repeating `--field key=value` for the same key now collects the values into an array, so multi-value fields can be written from `nim tracker create`/`update` (previously only the last value was kept).
 
 ### Removed
 <!-- Removed features go here -->
