@@ -105,7 +105,7 @@ import {
 } from '../../store/atoms/terminals';
 import { scrollToTeammateAtom, scrollToMessageAtom, requestOpenSessionAtom } from '../../store/atoms/agentMode';
 import { usePostHog } from 'posthog-js/react';
-import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, chatShowToolCallsAtom } from '../../store/atoms/appSettings';
+import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, chatShowToolCallsAtom, developerModeAtom } from '../../store/atoms/appSettings';
 import { supportsEffortLevel, supportsThinkingToggle, parseEffortLevel, parseThinkingMode, type EffortLevel, type ThinkingMode } from '../../utils/modelUtils';
 import { buildPlanImplementationPrompt, resolvePlanFilePath } from '../../utils/pathUtils';
 import { resolveTranscriptClickPath } from '../../utils/resolveTranscriptClickPath';
@@ -538,7 +538,11 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const effortLevel = useMemo(() => {
     return rawEffortLevel != null ? parseEffortLevel(rawEffortLevel) : defaultEffortLevel;
   }, [rawEffortLevel, defaultEffortLevel]);
-  const showThinkingToggle = useMemo(() => supportsThinkingToggle(currentModel), [currentModel]);
+  // Extended-thinking is a power-user control: only surface the selector in
+  // developer mode. When hidden, thinkingMode is never set, so the default
+  // (adaptive/enabled) applies.
+  const developerMode = useAtomValue(developerModeAtom);
+  const showThinkingToggle = useMemo(() => developerMode && supportsThinkingToggle(currentModel), [developerMode, currentModel]);
   const thinkingMode = useMemo(() => parseThinkingMode(rawThinkingMode), [rawThinkingMode]);
 
   // Memoize the teammate list passed to AgentTranscriptPanel so its memo
