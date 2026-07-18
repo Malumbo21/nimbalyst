@@ -57,6 +57,10 @@ export function TeamManagementApp() {
   return (
     <DialogProvider workspacePath={target.workspacePath ?? undefined}>
       <div className="team-management-window flex h-screen flex-col overflow-hidden bg-[var(--nim-bg)] text-[var(--nim-text)]" data-component="TeamManagementApp">
+        {/* Draggable title-bar strip: the window uses titleBarStyle 'hiddenInset'
+            (no native bar), so without this the window can't be moved and the
+            macOS traffic lights have no clearance. */}
+        <div className="team-management-titlebar h-8 flex-shrink-0" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties} />
         <TeamMode workspacePath={target.workspacePath ?? undefined} isActive />
       </div>
     </DialogProvider>
