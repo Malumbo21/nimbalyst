@@ -387,7 +387,7 @@ export const SharedDocsListView: React.FC<SharedDocsListViewProps> = ({ workspac
   const sortLabel = SORT_LABELS[sortColumn];
 
   return (
-    <div className="shared-docs-list-view flex-1 flex flex-col min-h-0 bg-nim select-text">
+    <div className="shared-docs-list-view h-full flex flex-col min-h-0 bg-nim select-text">
       {/* Header */}
       <div className="shared-docs-list-header flex items-center gap-3 px-4 py-2.5 border-b border-nim shrink-0">
         <div className="flex items-center gap-2 shrink-0">
