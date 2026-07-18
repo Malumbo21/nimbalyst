@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { useSetAtom, useAtomValue, useAtom } from 'jotai';
 import type { ConfigTheme } from '@nimbalyst/runtime';
-import { useTabsActions, type TabData } from '../../contexts/TabsContext';
+import { useTabsActions, useTabNavigationShortcuts, type TabData } from '../../contexts/TabsContext';
 import { store, editorDirtyAtom, makeEditorKey } from '@nimbalyst/runtime/store';
 import { fileDeletedAtomFamily } from '../../store/atoms/fileWatch';
 import { pushNavigationEntryAtom, isRestoringNavigationAtom, historyDialogFileAtom } from '../../store';
@@ -12,6 +12,7 @@ import { useResizeDragShield } from '../../hooks/useResizeDragShield';
 import { handleWorkspaceFileSelect as handleWorkspaceFileSelectUtil } from '../../utils/workspaceFileOperations';
 import { createInitialFileContent, createMockupContent } from '../../utils/fileUtils';
 import { getFileName } from '../../utils/pathUtils';
+import { canPersistWorkspaceHydratedState } from '../../utils/workspaceHydration';
 import { isCollabUri } from '../../utils/collabUri';
 import { aiToolService } from '../../services/AIToolService';
 import { editorRegistry } from '@nimbalyst/runtime/ai/EditorRegistry';
@@ -108,8 +109,60 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
 
   // AI Chat panel state — per-workspace so the rail-switch keeps each
   // project's collapse and width preferences.
-  const [isAIChatCollapsed, setIsAIChatCollapsed] = useAtom(aiChatCollapsedAtomFamily(workspacePath));
-  const [aiChatWidth, setAIChatWidth] = useAtom(aiChatWidthAtomFamily(workspacePath));
+  const [isAIChatCollapsed, setIsAIChatCollapsedAtom] = useAtom(aiChatCollapsedAtomFamily(workspacePath));
+  const [aiChatWidth, setAIChatWidthAtom] = useAtom(aiChatWidthAtomFamily(workspacePath));
+  const [aiChatLayoutLoadedWorkspacePath, setAIChatLayoutLoadedWorkspacePath] = useState<string | null>(null);
+  const aiChatLayoutChangedBeforeLoadRef = useRef(false);
+  const setIsAIChatCollapsed = useCallback<React.Dispatch<React.SetStateAction<boolean>>>((update) => {
+    aiChatLayoutChangedBeforeLoadRef.current = true;
+    setIsAIChatCollapsedAtom(update);
+  }, [setIsAIChatCollapsedAtom]);
+  const setAIChatWidth = useCallback<React.Dispatch<React.SetStateAction<number>>>((update) => {
+    aiChatLayoutChangedBeforeLoadRef.current = true;
+    setAIChatWidthAtom(update);
+  }, [setAIChatWidthAtom]);
+
+  useEffect(() => {
+    let cancelled = false;
+    aiChatLayoutChangedBeforeLoadRef.current = false;
+    setAIChatLayoutLoadedWorkspacePath(null);
+
+    window.electronAPI.invoke('workspace:get-state', workspacePath)
+      .then((workspaceState) => {
+        if (cancelled) return;
+        if (!aiChatLayoutChangedBeforeLoadRef.current) {
+          setIsAIChatCollapsedAtom(workspaceState?.aiPanel?.collapsed ?? false);
+          setAIChatWidthAtom(workspaceState?.aiPanel?.width ?? 350);
+        }
+        setAIChatLayoutLoadedWorkspacePath(workspacePath);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          console.error('[EditorMode] Failed to load AI chat layout:', error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [setAIChatWidthAtom, setIsAIChatCollapsedAtom, workspacePath]);
+
+  useEffect(() => {
+    if (!canPersistWorkspaceHydratedState(
+      workspacePath,
+      aiChatLayoutLoadedWorkspacePath,
+      aiChatLayoutChangedBeforeLoadRef.current,
+    )) return;
+
+    window.electronAPI.invoke('workspace:update-state', workspacePath, {
+      aiPanel: {
+        collapsed: isAIChatCollapsed,
+        width: aiChatWidth,
+      },
+    }).catch((error) => {
+      console.error('[EditorMode] Failed to save AI chat layout:', error);
+    });
+  }, [aiChatLayoutLoadedWorkspacePath, aiChatWidth, isAIChatCollapsed, workspacePath]);
 
   // Track active tab for document context (AI needs to know current file)
   // Uses ref to avoid re-rendering EditorMode on every tab switch
@@ -127,6 +180,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
 
   // Get tab actions from context (doesn't subscribe to state - no re-renders)
   const tabsActions = useTabsActions();
+  useTabNavigationShortcuts(isActive);
 
   // Refs for imperative DOM updates - NO re-renders for tab visibility
   const tabsContainerRef = useRef<HTMLDivElement>(null);
@@ -449,6 +503,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
         documentType: params.documentType,
         documentKey,
         serverUrl: cfg.serverUrl,
+        accountId: cfg.accountId ?? cfg.userId,
         userId: cfg.userId,
         userName: cfg.userName ?? 'Test User',
         userEmail: cfg.userEmail ?? 'test@test.com',
@@ -526,6 +581,7 @@ const EditorMode = forwardRef<EditorModeRef, EditorModeProps>(function EditorMod
         documentType: params.documentType,
         documentKey,
         serverUrl: cfg.serverUrl,
+        accountId: cfg.accountId ?? cfg.userId,
         userId: cfg.userId,
         userName: cfg.userName ?? 'Test User',
         userEmail: cfg.userEmail ?? 'test@test.com',

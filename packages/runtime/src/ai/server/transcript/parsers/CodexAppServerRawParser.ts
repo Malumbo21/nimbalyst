@@ -38,6 +38,8 @@ interface AppServerEnvelope {
   };
 }
 
+const WHOLE_MESSAGE_ELISION_MARKER = /^\[Full .+ message elided from mobile sync:.*\]$/;
+
 interface AppServerUsage {
   input_tokens?: number;
   output_tokens?: number;
@@ -60,7 +62,9 @@ interface AppServerItem {
   error?: { message: string };
   command?: string;
   aggregated_output?: string;
+  aggregatedOutput?: string;
   exit_code?: number;
+  exitCode?: number;
   content?: Array<{ type: string; text?: string }>;
   prompt?: string | null;
   senderThreadId?: string;
@@ -126,7 +130,7 @@ export class CodexAppServerRawParser implements IRawMessageParser {
     try { envelope = JSON.parse(msg.content); }
     catch {
       const content = String(msg.content ?? '');
-      if (content.trim()) {
+      if (content.trim() && !WHOLE_MESSAGE_ELISION_MARKER.test(content.trim())) {
         descriptors.push({ type: 'assistant_message', text: content, createdAt: msg.createdAt });
       }
       return descriptors;
@@ -345,6 +349,8 @@ export class CodexAppServerRawParser implements IRawMessageParser {
         subagentId: item.id,
         agentType: 'Session',
         prompt: item.prompt ?? '',
+        ...(item.model != null ? { model: item.model } : {}),
+        ...(item.reasoningEffort != null ? { reasoningEffort: item.reasoningEffort } : {}),
         createdAt: msg.createdAt,
       }];
     }
@@ -365,6 +371,8 @@ export class CodexAppServerRawParser implements IRawMessageParser {
         subagentId: item.id,
         status: 'completed',
         resultSummary: this.buildSpawnAgentResultSummary(item),
+        ...(item.model != null ? { model: item.model } : {}),
+        ...(item.reasoningEffort != null ? { reasoningEffort: item.reasoningEffort } : {}),
       }];
     }
 
@@ -568,9 +576,9 @@ export class CodexAppServerRawParser implements IRawMessageParser {
         type: 'tool_call_completed',
         providerToolCallId: editGroupId,
         status: isError ? 'error' : 'completed',
-        result: item.aggregated_output ?? '',
+        result: item.aggregated_output ?? item.aggregatedOutput ?? '',
         isError,
-        exitCode: item.exit_code,
+        exitCode: item.exit_code ?? item.exitCode,
       });
       this.inFlightSyntheticIds.delete(rawItemId);
     }
@@ -690,7 +698,7 @@ export class CodexAppServerRawParser implements IRawMessageParser {
     const args: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(record)) {
       if (value === undefined) continue;
-      if (['id', 'type', 'status', 'result', 'error', 'aggregated_output', 'exit_code', 'text', 'content', 'items'].includes(key)) {
+      if (['id', 'type', 'status', 'result', 'error', 'aggregated_output', 'aggregatedOutput', 'exit_code', 'exitCode', 'text', 'content', 'items'].includes(key)) {
         continue;
       }
       args[key] = value;
@@ -700,7 +708,8 @@ export class CodexAppServerRawParser implements IRawMessageParser {
 
   private buildGenericToolLikeResult(item: AppServerItem): string {
     if (item.error?.message) return item.error.message;
-    if (typeof item.aggregated_output === 'string' && item.aggregated_output) return item.aggregated_output;
+    const aggregatedOutput = item.aggregated_output ?? item.aggregatedOutput;
+    if (typeof aggregatedOutput === 'string' && aggregatedOutput) return aggregatedOutput;
 
     const directResult = this.extractToolResult(item).resultText;
     if (directResult) return directResult;
@@ -755,12 +764,6 @@ export class CodexAppServerRawParser implements IRawMessageParser {
       parts.push(`receiver_thread_ids: ${item.receiverThreadIds.join(', ')}`);
     } else {
       parts.push('receiver_thread_ids: none');
-    }
-    if (item.model) {
-      parts.push(`model: ${item.model}`);
-    }
-    if (item.reasoningEffort) {
-      parts.push(`reasoning_effort: ${item.reasoningEffort}`);
     }
     return parts.join('\n');
   }

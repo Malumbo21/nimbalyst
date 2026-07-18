@@ -20,6 +20,7 @@ import type { AgentMessage } from '../ai/server/types';
 import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
 import { appendSyncClientParams } from './syncClientInfo';
 import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
+import { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 import type {
   SyncConfig,
   SyncStatus,
@@ -38,6 +39,8 @@ import type {
   VoiceToolResponse,
   EncryptedSettingsPayload,
   EncryptedReadReceiptPayload,
+  EncryptedTrackerPersonalStatePayload,
+  SyncedTrackerPersonalStateChange,
   SyncedSettings,
   SessionControlMessage,
   EncryptedAttachment,
@@ -297,6 +300,7 @@ type ClientMessage =
   | { type: 'requestMobilePush'; sessionId: string; title: string; body: string; requestingDeviceId?: string }
   | { type: 'settingsSync'; settings: EncryptedSettingsPayload }
   | { type: 'readReceipt'; receipt: EncryptedReadReceiptPayload }
+  | { type: 'trackerPersonalState'; state: EncryptedTrackerPersonalStatePayload }
   | { type: 'fileIndexUpdate'; file: EncryptedFileIndexEntry }
   | { type: 'fileIndexDelete'; docId: string };
 
@@ -346,6 +350,7 @@ type ServerMessage =
   | { type: 'sessionControlBroadcast'; message: { sessionId: string; messageType: string; payload?: Record<string, unknown>; timestamp: number; sentBy: 'desktop' | 'mobile' }; fromConnectionId?: string }
   | { type: 'settingsSyncBroadcast'; settings: EncryptedSettingsPayload; fromConnectionId?: string }
   | { type: 'readReceiptBroadcast'; receipt: EncryptedReadReceiptPayload; fromConnectionId?: string }
+  | { type: 'trackerPersonalStateBroadcast'; state: EncryptedTrackerPersonalStatePayload; fromConnectionId?: string }
   | { type: 'error'; code: string; message: string };
 
 // ============================================================================
@@ -803,6 +808,18 @@ interface SessionConnection {
   lastActivity: number;
 }
 
+const FATAL_MESSAGE_SYNC_ERROR_CODES = new Set([
+  'message_limit_exceeded',
+  'message_too_large',
+  'storage_limit_exceeded',
+]);
+
+function isFatalMessageSyncErrorCode(code?: string): boolean {
+  return code !== undefined && FATAL_MESSAGE_SYNC_ERROR_CODES.has(code);
+}
+
+export { isFatalMessageSyncErrorCode as isFatalMessageSyncErrorCodeForTest };
+
 // Cache of session index entries for partial update merging
 // This cache stores DECRYPTED values locally
 interface CachedSessionIndex {
@@ -935,6 +952,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
   const sessions = new Map<string, SessionConnection>();
   const sessionIndexCache = new Map<string, CachedSessionIndex>();
+  const disabledMessageSyncSessions = new Set<string>();
   /**
    * Session IDs the caller has explicitly asked us to keep connected. Populated
    * on `connect(sessionId)`, cleared on `disconnect(sessionId)`/`disconnectAll`.
@@ -1003,6 +1021,38 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         cb();
       } catch (err) {
         console.error('[CollabV3] indexReady listener threw:', err);
+      }
+    }
+  }
+
+  function isMessageSyncDisabled(sessionId: string): boolean {
+    return disabledMessageSyncSessions.has(sessionId);
+  }
+
+  function disableMessageSync(sessionId: string, code?: string, message?: string): void {
+    const firstDisable = !disabledMessageSyncSessions.has(sessionId);
+    disabledMessageSyncSessions.add(sessionId);
+    if (firstDisable) {
+      console.warn(
+        `[CollabV3] Disabling message sync for ${sessionId} after fatal server rejection` +
+        `${code ? ` (${code})` : ''}${message ? `: ${message}` : ''}`
+      );
+    }
+
+    updateStatus(sessionId, {
+      connected: false,
+      syncing: false,
+      error: message || 'Session reached the server sync limit',
+    });
+    wantedSessions.delete(sessionId);
+
+    const session = sessions.get(sessionId);
+    if (session) {
+      sessions.delete(sessionId);
+      try {
+        session.ws.close();
+      } catch {
+        // The session is already disabled; socket cleanup is best-effort.
       }
     }
   }
@@ -1121,6 +1171,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
   // Read-receipt listeners (unread-indicator state arriving from other devices)
   const readReceiptListeners = new Set<(receipt: SyncedReadReceipt) => void>();
+  const trackerPersonalStateListeners = new Set<(change: SyncedTrackerPersonalStateChange) => void>();
 
   // Notify all device status listeners
   function notifyDeviceStatusChange(): void {
@@ -1483,6 +1534,10 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
         case 'error':
           console.error(`[CollabV3] Server error for ${sessionId}:`, message.code, message.message);
+          if (isFatalMessageSyncErrorCode(message.code)) {
+            disableMessageSync(sessionId, message.code, message.message);
+            break;
+          }
           updateStatus(sessionId, { error: message.message });
           break;
       }
@@ -1497,6 +1552,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   ): Promise<void> {
     const session = sessions.get(sessionId);
     if (!session) return;
+    if (isMessageSyncDisabled(sessionId)) return;
 
     // Update last sequence
     if (response.messages.length > 0) {
@@ -2473,6 +2529,27 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             break;
           }
 
+          case 'trackerPersonalStateBroadcast': {
+            const payload = message.state;
+            const ourDeviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId;
+            if (ourDeviceId && payload.deviceId === ourDeviceId) break;
+            if (!config.encryptionKey) {
+              console.error('[CollabV3] Cannot decrypt tracker personal state - no encryption key');
+              break;
+            }
+            try {
+              const json = await decrypt(payload.encryptedState, payload.stateIv, config.encryptionKey);
+              const change: SyncedTrackerPersonalStateChange = JSON.parse(json);
+              trackerPersonalStateListeners.forEach((callback) => {
+                try { callback(change); }
+                catch (err) { console.error('[CollabV3] Error in tracker personal state listener:', err); }
+              });
+            } catch (err) {
+              console.error('[CollabV3] Failed to decrypt tracker personal state:', err);
+            }
+            break;
+          }
+
           case 'error':
             console.error('[CollabV3] Index error:', message.code, message.message);
             if (pendingIndexFetch) {
@@ -2515,6 +2592,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     messages: AgentMessage[],
     metadata?: { title?: string; provider?: string; model?: string; mode?: string }
   ): Promise<void> {
+    if (isMessageSyncDisabled(sessionId)) return;
     if (!config.encryptionKey) {
       console.error('[CollabV3] Cannot sync messages - no encryption key');
       return;
@@ -2545,6 +2623,14 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
       ws.onopen = async () => {
         try {
+          if (isMessageSyncDisabled(sessionId)) {
+            clearTimeout(timeout);
+            resolved = true;
+            ws.close();
+            resolve();
+            return;
+          }
+
           // First update metadata if provided
           if (metadata) {
             const wireMetadata: Partial<SessionMetadata> = {
@@ -2569,6 +2655,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
           // Send each message
           for (const message of messages) {
+            if (isMessageSyncDisabled(sessionId)) break;
             if (!shouldSyncMessageForSessionRoom(message.source, message.metadata, message.content)) {
               continue;
             }
@@ -2602,6 +2689,24 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             ? event.message || 'WebSocket error'
             : 'WebSocket connection error';
           reject(new Error(`[CollabV3] ${errorInfo} for session ${sessionId}`));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (resolved) return;
+        try {
+          const message: ServerMessage = JSON.parse(
+            typeof event.data === 'string' ? event.data : new TextDecoder().decode(event.data)
+          );
+          if (message.type !== 'error' || !isFatalMessageSyncErrorCode(message.code)) return;
+
+          disableMessageSync(sessionId, message.code, message.message);
+          clearTimeout(timeout);
+          resolved = true;
+          ws.close();
+          resolve();
+        } catch {
+          // Non-JSON and unrelated server messages do not affect batch sync.
         }
       };
 
@@ -2843,6 +2948,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   // Create provider object
   const provider: SyncProvider = {
     async connect(sessionId: string): Promise<void> {
+      if (isMessageSyncDisabled(sessionId)) return;
       // Track this session as wanted so we re-subscribe after reconnects.
       // Do this before the short-circuit so callers resubscribing an already-connected
       // session (e.g. after the Map got deleted on onclose) still register intent.
@@ -3046,6 +3152,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     },
 
     async pushChange(sessionId: string, change: SessionChange): Promise<void> {
+      if (isMessageSyncDisabled(sessionId) && change.type === 'message_added') return;
       const session = sessions.get(sessionId);
       const sessionConnected = session?.status.connected;
 
@@ -3069,7 +3176,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             console.warn('[CollabV3] Cannot push message - no encryption key or session room not connected');
             return;
           }
-          if (!shouldSyncMessageForSessionRoom(change.message.source, change.message.metadata, change.message.content)) {
+          if (!shouldSyncMessageForSessionRoom(change.message.source, change.message.metadata, change.message.content, change.message.hidden)) {
             return;
           }
           try {
@@ -3860,6 +3967,43 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       return () => {
         readReceiptListeners.delete(callback);
       };
+    },
+
+    async syncTrackerPersonalState(change: SyncedTrackerPersonalStateChange): Promise<void> {
+      if (!indexWs || !indexConnected) {
+        try { await connectToIndex(); }
+        catch (err) {
+          console.error('[CollabV3] Failed to connect before syncing tracker personal state:', err);
+          return;
+        }
+      }
+      if (!indexWs || !indexConnected || indexWs.readyState !== WebSocket.OPEN) return;
+      if (!config.encryptionKey) {
+        console.error('[CollabV3] Cannot sync tracker personal state - no encryption key');
+        return;
+      }
+      try {
+        const deviceId = config.getDeviceInfo?.()?.deviceId ?? config.deviceInfo?.deviceId ?? 'unknown';
+        const stateKey = await deriveTrackerPersonalStateKey(change.scope, change.itemId, change.kind);
+        const { encrypted, iv } = await encrypt(JSON.stringify(change), config.encryptionKey);
+        const version = change.kind === 'favorite' ? change.favoriteUpdatedAt : change.lastOpenedAt;
+        const state: EncryptedTrackerPersonalStatePayload = {
+          stateKey,
+          encryptedState: encrypted,
+          stateIv: iv,
+          deviceId,
+          version,
+          timestamp: Date.now(),
+        };
+        indexWs.send(JSON.stringify({ type: 'trackerPersonalState', state } satisfies ClientMessage));
+      } catch (err) {
+        console.error('[CollabV3] Failed to encrypt/send tracker personal state:', err);
+      }
+    },
+
+    onTrackerPersonalState(callback: (change: SyncedTrackerPersonalStateChange) => void): () => void {
+      trackerPersonalStateListeners.add(callback);
+      return () => trackerPersonalStateListeners.delete(callback);
     },
 
     /** Request the sync server to send a push notification to mobile devices */

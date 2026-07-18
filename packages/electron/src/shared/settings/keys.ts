@@ -100,7 +100,7 @@ export const SETTINGS_REGISTRY = {
   'ai.provider.claude-code-cli': setting(
     ProviderConfigSchema,
     { store: 'ai-settings', path: 'providerSettings.claude-code-cli' },
-    { enabled: true, testStatus: 'idle' },
+    { enabled: false, testStatus: 'idle' },
   ),
   'ai.provider.openai': setting(
     ProviderConfigSchema,
@@ -110,7 +110,7 @@ export const SETTINGS_REGISTRY = {
   'ai.provider.openai-codex': setting(
     ProviderConfigSchema,
     { store: 'ai-settings', path: 'providerSettings.openai-codex' },
-    { enabled: false, testStatus: 'idle', installStatus: 'not-installed' },
+    { enabled: true, testStatus: 'idle', installStatus: 'not-installed' },
   ),
   'ai.provider.openai-codex-acp': setting(
     ProviderConfigSchema,

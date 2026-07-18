@@ -426,7 +426,7 @@ export function VoiceModeButton({ workspacePath }: VoiceModeButtonProps) {
   const handleOpenVoiceModeSettings = () => {
     store.set(openSettingsCommandAtom, {
       category: 'voice-mode',
-      scope: 'user',
+      scope: 'application',
       timestamp: Date.now(),
     });
     setError(null);

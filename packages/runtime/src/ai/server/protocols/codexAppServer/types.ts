@@ -408,6 +408,62 @@ export interface AccountUpdatedNotification {
   planType: string | null;
 }
 
+export interface AccountRateLimitWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface AccountCreditsSnapshot {
+  hasCredits: boolean;
+  unlimited: boolean;
+  balance: string | null;
+}
+
+export interface AccountSpendControlLimitSnapshot {
+  limit: string;
+  used: string;
+  remainingPercent: number;
+  resetsAt: number;
+}
+
+export interface AccountRateLimitSnapshot {
+  limitId: string | null;
+  limitName: string | null;
+  primary: AccountRateLimitWindow | null;
+  secondary: AccountRateLimitWindow | null;
+  credits: AccountCreditsSnapshot | null;
+  individualLimit: AccountSpendControlLimitSnapshot | null;
+  spendControlReached?: boolean | null;
+  planType: string | null;
+  rateLimitReachedType: string | null;
+}
+
+export interface AccountRateLimitResetCredit {
+  id: string;
+  resetType: string;
+  status: string;
+  grantedAt: number;
+  expiresAt: number | null;
+  title: string | null;
+  description: string | null;
+}
+
+export interface AccountRateLimitResetCredits {
+  availableCount: number;
+  credits: AccountRateLimitResetCredit[] | null;
+}
+
+export interface AccountRateLimitsReadResponse {
+  rateLimits: AccountRateLimitSnapshot | null;
+  rateLimitsByLimitId?: Record<string, AccountRateLimitSnapshot> | null;
+  rateLimitResetCredits?: AccountRateLimitResetCredits | null;
+}
+
+export interface AccountRateLimitsUpdatedNotification {
+  rateLimits: AccountRateLimitSnapshot;
+}
+
 // ---- Server-to-client requests (we respond to these) ----
 
 export interface ItemFileChangeRequestApprovalParams {

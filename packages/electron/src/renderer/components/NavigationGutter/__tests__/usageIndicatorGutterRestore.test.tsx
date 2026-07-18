@@ -44,7 +44,7 @@ import { GeminiUsagePopover } from '../../GeminiUsageIndicator/GeminiUsagePopove
 afterEach(() => cleanup());
 
 function noopRef() {
-  return { current: null } as React.RefObject<HTMLElement>;
+  return { current: null } as React.RefObject<HTMLElement | null>;
 }
 
 describe('usage popover "Disable" hides via the gutter customization atom', () => {
@@ -69,9 +69,11 @@ describe('usage popover "Disable" hides via the gutter customization atom', () =
 
   it('CodexUsagePopover Disable adds codex-usage to hiddenGutterItemsAtom', () => {
     const store = createStore();
+    // Codex usage now uses the duration-window shape (see codexUsageAtoms).
+    // The Disable button renders regardless of limits, so an empty window
+    // list is enough to mount the popover far enough to click it.
     store.set(codexUsageAtom, {
-      fiveHour: { utilization: 10, resetsAt: null },
-      sevenDay: { utilization: 10, resetsAt: null },
+      limits: [],
       lastUpdated: Date.now(),
     });
 

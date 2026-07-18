@@ -23,7 +23,44 @@ describe('resolveStreamStallMs', () => {
   });
 });
 
+describe('DEFAULT_STREAM_STALL_MS window (#802)', () => {
+  it('covers the measured worst-case intra-turn heartbeat gap', () => {
+    // `thinking_tokens` is a variable-cadence estimated-token progress tick, not a
+    // ~1Hz wall-clock keepalive. Measured against real persisted chunks the intra-turn
+    // gap averaged ~5s but reached ~589s; the old 120s window reaped legitimate long
+    // thinking turns (#802). The window must sit comfortably above that observed max.
+    expect(DEFAULT_STREAM_STALL_MS).toBeGreaterThanOrEqual(600_000);
+  });
+});
+
 describe('raceNextChunkWithStallWatchdog', () => {
+  it('a sparse heartbeat gap that tripped the old 120s window survives a 10-min window (#802)', async () => {
+    // Scaled 1000x (ms stand in for seconds): a heartbeat arrives after a ~200s gap.
+    // Under the old 120s window it was reaped; under the raised window it is delivered.
+    const gapMs = 200;
+    const makeTick = () =>
+      new Promise<IteratorResult<string>>(resolve =>
+        setTimeout(() => resolve({ value: 'thinking-tick', done: false }), gapMs),
+      );
+
+    const underOldWindow = await raceNextChunkWithStallWatchdog<string>({
+      nextPromise: makeTick(),
+      interruptPromise: forever<'interrupted'>(),
+      watchdogActive: true,
+      stallMs: 120,
+    });
+    expect(underOldWindow.kind).toBe('stalled');
+
+    const underNewWindow = await raceNextChunkWithStallWatchdog<string>({
+      nextPromise: makeTick(),
+      interruptPromise: forever<'interrupted'>(),
+      watchdogActive: true,
+      stallMs: 600,
+    });
+    expect(underNewWindow.kind).toBe('chunk');
+    if (underNewWindow.kind === 'chunk') expect(underNewWindow.result.value).toBe('thinking-tick');
+  });
+
   it('reports stalled when the stream goes silent and the watchdog is armed', async () => {
     const outcome = await raceNextChunkWithStallWatchdog<string>({
       nextPromise: forever<IteratorResult<string>>(),

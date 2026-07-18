@@ -8,6 +8,7 @@
  * scheduler broadcasts `pr:list-updated`.
  */
 
+import type { JSX } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';

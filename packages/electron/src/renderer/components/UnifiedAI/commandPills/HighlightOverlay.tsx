@@ -59,7 +59,7 @@ const TEXT_STYLE_PROPS = [
 ] as const;
 
 interface HighlightOverlayProps {
-  textareaRef: React.RefObject<HTMLTextAreaElement>;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   value: string;
   tokens: OverlayToken[];
   /** Called with the clicked command token and the pill's viewport rect. */

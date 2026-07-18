@@ -46,14 +46,14 @@ export interface UseTrackerRowsResult {
   // Keyboard focus
   focusedIndex: number;
   setFocusedIndex: React.Dispatch<React.SetStateAction<number>>;
-  containerRef: React.RefObject<HTMLDivElement>;
+  containerRef: React.RefObject<HTMLDivElement | null>;
 
   // Inline edit
   editingCell: EditingCellRef | null;
   setEditingCell: (cell: EditingCellRef | null) => void;
   editingTitle: string;
   setEditingTitle: (t: string) => void;
-  titleInputRef: React.RefObject<HTMLInputElement>;
+  titleInputRef: React.RefObject<HTMLInputElement | null>;
   handleFieldUpdate: (item: TrackerRecord, field: string, value: string) => Promise<void>;
 
   // Row interaction

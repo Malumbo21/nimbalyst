@@ -8,6 +8,7 @@
  * existing item (of any type) to this PR via system.linkedPullRequests.
  */
 
+import type { JSX } from 'react';
 import { useMemo, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';

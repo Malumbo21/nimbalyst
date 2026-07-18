@@ -51,9 +51,12 @@ export type {
   SessionControlMessage,
   SyncedSettings,
   SyncedAvailableModel,
+  SyncedTrackerPersonalStateChange,
+  EncryptedTrackerPersonalStatePayload,
 } from './types';
 
 export { createCollabV3Sync } from './CollabV3Sync';
+export { deriveTrackerPersonalStateKey } from './trackerPersonalStateKey';
 
 export {
   setSyncClientInfo,
@@ -72,6 +75,44 @@ export {
   DocumentSyncProvider,
   createDocumentSyncProvider,
 } from './DocumentSync';
+
+export { LocalDocumentReplica } from './LocalDocumentReplica';
+export {
+  OutboxDrainer,
+  OutboxWriteRejectedError,
+  isConfirmedOutboxRevocationCode,
+} from './OutboxDrainer';
+export type {
+  OutboxDrainBatch,
+  OutboxDrainSendResult,
+  OutboxDrainTransport,
+  OutboxDrainerOptions,
+  OutboxDrainResult,
+} from './OutboxDrainer';
+export type {
+  LocalDocumentReplicaOptions,
+  LocalReplicaCompactionOptions,
+  LocalDocumentReplicaState,
+  ApplyRemoteReplicaUpdate,
+  LocalReplicaReplayBatch,
+} from './LocalDocumentReplica';
+export { DEFAULT_LOCAL_REPLICA_COMPACTION } from './LocalDocumentReplica';
+export type {
+  LocalReplicaIdentity,
+  LocalReplicaCompleteness,
+  LocalReplicaUpdateSource,
+  LocalReplicaOutboxState,
+  LocalDocumentReplicaOutboxState,
+  LocalReplicaUpdate,
+  LocalReplicaOutboxEntry,
+  LocalReplicaPendingOutbox,
+  LoadedLocalReplica,
+  AppendLocalReplicaUpdateInput,
+  AppendRemoteReplicaUpdatesInput,
+  ReplaceLocalReplicaSnapshotInput,
+  LocalReplicaStorageUsage,
+  LocalReplicaStore,
+} from './LocalReplicaStore';
 
 export {
   isValidCollabDocumentId,
@@ -133,6 +174,7 @@ export type {
   TrackerRoomId,
   SyncId,
   EncryptedTrackerItemEnvelope,
+  EncryptedTrackerNavigationEnvelope,
   TrackerItemPayload,
   TrackerCommentEntry,
   TrackerIdentity,
@@ -142,11 +184,16 @@ export type {
   TrackerServerMessage,
   TrackerSyncRequestMessage,
   TrackerMutationRequestMessage,
+  TrackerNavigationSyncRequestMessage,
+  TrackerNavigationMutationRequestMessage,
   TrackerSetConfigMessage,
   TrackerPingMessage,
   TrackerSyncResponseMessage,
   TrackerDeltaMessage,
   TrackerMutationAckMessage,
+  TrackerNavigationSyncResponseMessage,
+  TrackerNavigationDeltaMessage,
+  TrackerNavigationMutationAckMessage,
   TrackerMutationRejectCode,
   TrackerConfigBroadcastMessage,
   TrackerPongMessage,
@@ -168,6 +215,8 @@ export {
 export {
   encryptTrackerPayload,
   decryptTrackerEnvelope,
+  encryptTrackerNavigationPayload,
+  decryptTrackerNavigationEnvelope,
   fingerprintTrackerKey,
 } from './TrackerEnvelopeCrypto';
 
@@ -211,6 +260,17 @@ export type {
   AppliedTrackerItem,
   RejectedTrackerMutation,
 } from './TrackerSyncEngine';
+
+export {
+  isTrackerNavigationEntry,
+  compareTrackerNavigationEntries,
+} from './trackerNavigation';
+
+export type {
+  TrackerNavigationEntry,
+  TrackerNavigationFolder,
+  TrackerTypePlacement,
+} from './trackerNavigation';
 
 export {
   TeamSyncProvider,

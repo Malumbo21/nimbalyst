@@ -1,8 +1,7 @@
 import { execSync } from 'child_process';
 import { existsSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
-import { isGitAvailable, logEbadfDiagnostic } from '../utils/gitUtils';
-import { getAllFilesInDirectory } from '../utils/fileUtils';
+import { getUntrackedFilesInDirectory, isGitAvailable, logEbadfDiagnostic } from '../utils/gitUtils';
 
 export interface FileGitStatus {
   filePath: string;
@@ -29,6 +28,31 @@ export interface GitStatusResult {
  *
  * Exported for unit testing.
  */
+// Per-directory cache of `.git` existence. findGitRootForFile is called once
+// per file by getFileStatus, walking up the tree with an existsSync at every
+// level; without caching this is an O(files x depth) synchronous FS storm on
+// the main thread under multi-session editing of a large repo (nimbalyst#868).
+// Git roots do not move during a session, so memoizing is safe.
+const gitDirExistsCache = new Map<string, boolean>();
+
+/** Test-only: reset the git-root existence cache. */
+export function __resetGitRootCache(): void {
+  gitDirExistsCache.clear();
+}
+
+function hasGitDir(dir: string): boolean {
+  let cached = gitDirExistsCache.get(dir);
+  if (cached === undefined) {
+    try {
+      cached = existsSync(join(dir, '.git'));
+    } catch {
+      cached = false;
+    }
+    gitDirExistsCache.set(dir, cached);
+  }
+  return cached;
+}
+
 export function findGitRootForFile(filePath: string, boundary: string): string | null {
   const boundaryAbs = resolve(boundary);
   const fileAbs = isAbsolute(filePath) ? filePath : resolve(boundaryAbs, filePath);
@@ -47,7 +71,7 @@ export function findGitRootForFile(filePath: string, boundary: string): string |
   // Walk up until we leave the boundary, hit fs root, or find `.git`.
   while (true) {
     try {
-      if (existsSync(join(dir, '.git'))) {
+      if (hasGitDir(dir)) {
         return dir;
       }
     } catch {
@@ -397,9 +421,12 @@ export class GitStatusService {
             try {
               const stats = statSync(absolutePath);
               if (stats.isDirectory()) {
-                // Expand directory to get all files inside (returns absolute paths)
-                const filesInDir = getAllFilesInDirectory(absolutePath);
-                for (const filePath of filesInDir) {
+                // Expand the untracked directory to individual files, honoring
+                // .gitignore so an installed node_modules/dist doesn't explode
+                // into tens of thousands of paths (NIM-1782).
+                const relFiles = getUntrackedFilesInDirectory(workspacePath, absolutePath);
+                for (const relFile of relFiles) {
+                  const filePath = resolve(workspacePath, relFile);
                   uncommittedFiles.push(filePath);
                   cacheResult[filePath] = {
                     filePath,
@@ -726,9 +753,12 @@ export class GitStatusService {
             try {
               const stats = statSync(absolutePath);
               if (stats.isDirectory()) {
-                // Expand directory to get all files inside (returns absolute paths)
-                const filesInDir = getAllFilesInDirectory(absolutePath);
-                for (const filePath of filesInDir) {
+                // Expand the untracked directory to individual files, honoring
+                // .gitignore so an installed node_modules/dist doesn't explode
+                // into tens of thousands of paths (NIM-1782).
+                const relFiles = getUntrackedFilesInDirectory(workspacePath, absolutePath);
+                for (const relFile of relFiles) {
+                  const filePath = resolve(workspacePath, relFile);
                   result[filePath] = {
                     filePath,
                     status: 'untracked',

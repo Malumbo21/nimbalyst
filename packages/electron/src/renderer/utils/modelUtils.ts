@@ -23,7 +23,15 @@ import {
 } from '@nimbalyst/runtime/ai/modelConstants';
 import { CLAUDE_CODE_VARIANTS, ModelIdentifier, isClaudeCodeFamily } from '@nimbalyst/runtime/ai/server/types';
 
-export { type EffortLevel, EFFORT_LEVELS, DEFAULT_EFFORT_LEVEL, parseEffortLevel } from '@nimbalyst/runtime/ai/server/effortLevels';
+export {
+  type EffortLevel,
+  type ThinkingMode,
+  EFFORT_LEVELS,
+  DEFAULT_EFFORT_LEVEL,
+  DEFAULT_THINKING_MODE,
+  parseEffortLevel,
+  parseThinkingMode,
+} from '@nimbalyst/runtime/ai/server/effortLevels';
 
 interface ModelInfo {
   providerId: string;
@@ -241,16 +249,39 @@ export function getModelShortName(provider: string, modelId: string): string {
 
 /**
  * Check if a model supports effort level configuration.
- * Supported: Claude Code Opus (4.6+) and Sonnet (4.6+) variants including pinned
- * versions, plus OpenAI Codex models.
+ * Supported: Claude Code Fable, Opus, and Sonnet variants, including retained
+ * pinned versions, plus OpenAI Codex models.
  */
 export function supportsEffortLevel(modelId?: string): boolean {
   if (!modelId) return false;
   const variant = extractClaudeCodeVariant(modelId);
-  if (variant === 'opus' || variant === 'opus-4-6' || variant === 'sonnet') return true;
+  if (
+    variant === 'fable' ||
+    variant === 'opus' ||
+    variant === 'opus-4-7' ||
+    variant === 'opus-4-6' ||
+    variant === 'sonnet' ||
+    variant === 'sonnet-4-6'
+  ) return true;
   // OpenAI Codex models support reasoning effort (both SDK and ACP transports)
   const parsed = ModelIdentifier.tryParse(modelId);
   if (parsed?.provider === 'openai-codex' || parsed?.provider === 'openai-codex-acp') return true;
   if (modelId.startsWith('openai-codex:') || modelId.startsWith('openai-codex-acp:')) return true;
   return false;
+}
+
+/**
+ * Check if a model supports explicit Claude Agent extended-thinking toggling.
+ * Fable/Haiku-style lightweight variants do not accept the SDK thinking option.
+ *
+ * Matches every opus/sonnet variant (including pinned ones like `opus-4-7` and
+ * `sonnet-4-6`) so this stays in lock-step with the server-side
+ * `canDisableThinkingForModel` gate in sdkOptionsBuilder. If the two drift, a
+ * model can have thinking disabled on the server with no UI toggle to restore it.
+ */
+export function supportsThinkingToggle(modelId?: string): boolean {
+  if (!modelId) return false;
+  const variant = extractClaudeCodeVariant(modelId);
+  if (!variant) return false;
+  return variant.startsWith('opus') || variant.startsWith('sonnet');
 }

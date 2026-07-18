@@ -45,6 +45,7 @@ import {
   CLAUDE_CODE_MODEL_LABELS,
   CLAUDE_CODE_VARIANTS_WITH_1M,
   CLAUDE_CODE_SAFE_FALLBACK_MODEL,
+  baseContextWindowForVariant,
 } from '../../modelConstants';
 import { isBedrockToolSearchError } from '../utils/errorDetection';
 import { AgentMessagesRepository } from '../../../storage/repositories/AgentMessagesRepository';
@@ -489,9 +490,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
   }
 
   private resolveModelVariant(): string {
-    // Billing safety (#631 / NIM-848): when no explicit model is set, fall back
-    // to a STANDARD 200k model, never the 1M user-facing default. The `[1m]`
-    // beta must only ever be emitted for an explicitly-selected `-1m` model.
+    // Fallback safety (#631 / NIM-848): when no explicit model is set, fall back
+    // to plain `claude-code:opus`, never a `-1m` variant, so `[1m]` is only ever
+    // emitted for an explicitly-selected `-1m` model. On the current CLI this no
+    // longer changes cost for current-gen models (1M is flat-priced and `[1m]`
+    // is a no-op — GitHub #825), but it stays defensive for any legacy variant.
     return resolveClaudeCodeModelVariant(this.config.model, CLAUDE_CODE_SAFE_FALLBACK_MODEL);
   }
 
@@ -749,7 +752,8 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
             mcpServers: options.mcpServers ? Object.keys(options.mcpServers) : [],
             allowedTools: options.allowedTools,
             disallowedTools: options.disallowedTools,
-            permissionMode: options.permissionMode
+            permissionMode: options.permissionMode,
+            thinking: options.thinking
           }
         }), metadataToLog, hideMessages, undefined, true /* searchable */);
       }
@@ -856,9 +860,11 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
       // Stall watchdog window (NIM-1481). If the SDK yields no chunk of ANY kind
       // for this long while the model -- not a tool -- is expected to be producing
       // output, the stream is wedged (e.g. a thinking phase whose upstream died
-      // silently) and the turn is aborted instead of hanging forever. Legitimate
-      // long thinking never trips it because the SDK emits `thinking_tokens`
-      // heartbeats roughly once a second.
+      // silently) and the turn is aborted instead of hanging forever. The
+      // `thinking_tokens` chunk keeps a live thinking phase alive, but it is a
+      // variable-cadence estimated-token progress tick (avg ~5s, observed intra-turn
+      // gaps up to ~589s), NOT a ~1Hz keepalive -- so the window is sized generously
+      // above that jitter to avoid reaping legitimate long rewrites (#802).
       const streamStallMs = resolveStreamStallMs();
       const armPromptEndTimer = (reason: string) => {
         if (this.promptEndTimer) {
@@ -924,11 +930,12 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
           // stall watchdog. The watchdog is only armed while the MODEL is
           // expected to be producing output: before any `result` chunk, with no
           // tool executing, no background sub-agent draining, and no pending user
-          // prompt/permission request. In those states the SDK heartbeats
-          // (`thinking_tokens`) continuously, so total silence for streamStallMs
-          // means the stream is wedged. During a long tool call, sub-agent drain,
-          // or user interaction, silence is legitimate and the watchdog stays
-          // disarmed so real work is never reaped. NIM-1481.
+          // prompt/permission request. In those states the SDK still emits
+          // `thinking_tokens` progress ticks (bursty, not a fixed cadence), so total
+          // silence for the full streamStallMs window means the stream is wedged.
+          // During a long tool call, sub-agent drain, or user interaction, silence is
+          // legitimate and the watchdog stays disarmed so real work is never reaped.
+          // NIM-1481 / #802.
           const watchdogActive = shouldArmStreamStallWatchdog({
             resultReceivedTime,
             outstandingToolCalls,
@@ -3152,8 +3159,10 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
         timestamp: Date.now(),
       });
 
-      // Persist the response as a message for sync and audit trail
-      if (sessionId) {
+      // Mobile response handlers persist the durable response before invoking
+      // the provider so stale-response cutoffs remain correct. Desktop callers
+      // still rely on the provider-owned write here.
+      if (sessionId && respondedBy !== 'mobile') {
         const responseContent = {
           type: 'exit_plan_mode_response' as const,
           requestId,
@@ -3729,17 +3738,20 @@ export class ClaudeCodeProvider extends BaseAgentProvider {
 
     // Add models in desired order
     for (const variant of CLAUDE_CODE_VARIANTS) {
-      // Add base model (standard 200K context)
+      // Base model. Current-gen variants run 1M natively at a flat price, so
+      // their base window is 1M; legacy/haiku stay 200k (see
+      // baseContextWindowForVariant / GitHub #825).
       models.push({
         id: ModelIdentifier.create('claude-code', variant).combined,
         name: `Claude Agent · ${CLAUDE_CODE_MODEL_LABELS[variant]} ${CLAUDE_CODE_VARIANT_VERSIONS[variant]}`,
         provider: 'claude-code' as const,
         maxTokens: 8192,
-        contextWindow: 200000
+        contextWindow: baseContextWindowForVariant(variant)
       });
 
-      // Add 1M context variant if the variant supports it.
-      // 1M context is GA at standard pricing (March 2026).
+      // Add a separate 1M (`-1m`) row only for variants that still gate 1M
+      // behind the suffix. Current-gen variants are excluded — their base row is
+      // already 1M, so a `-1m` row would be a redundant duplicate.
       if ((CLAUDE_CODE_VARIANTS_WITH_1M as readonly string[]).includes(variant)) {
         models.push({
           id: ModelIdentifier.create('claude-code', `${variant}-1m`).combined,

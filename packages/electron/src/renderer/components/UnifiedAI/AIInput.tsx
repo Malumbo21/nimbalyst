@@ -5,11 +5,12 @@ import { extractTriggerMatch, getSlashTypeaheadScope, insertAtTrigger, type Slas
 import { buildSlashCommandOptions, fetchSlashCommandEntries, type SlashCommandEntry } from '../Typeahead/slashCommandAutocomplete';
 import { readClipboard, encodeMarkdownLinkPath, type ChatAttachment } from '@nimbalyst/runtime';
 import type { TokenUsageCategory } from '@nimbalyst/runtime/ai/server/types';
-import type { EffortLevel } from '../../utils/modelUtils';
+import type { EffortLevel, ThinkingMode } from '../../utils/modelUtils';
 import { AttachmentPreviewList } from '../AgenticCoding/AttachmentPreviewList';
 import { ModeTag, AIMode } from './ModeTag';
 import { ModelSelector } from './ModelSelector';
 import { EffortLevelSelector } from './EffortLevelSelector';
+import { ThinkingModeSelector } from './ThinkingModeSelector';
 import { registerPendingVoiceCommandSetter } from './VoiceModeButton.tsx';
 import { PendingVoiceCommand } from './PendingVoiceCommand';
 import { pendingVoiceCommandAtom, voiceActiveSessionIdAtom, type PendingVoiceCommand as PendingVoiceCommandType } from '../../store/atoms/voiceModeState';
@@ -40,6 +41,7 @@ import { parseCommandTokens, type CommandToken } from './commandPills/parseComma
 import { parseMentionTokens } from './commandPills/parseMentionTokens';
 import { HighlightOverlay, type OverlayToken } from './commandPills/HighlightOverlay';
 import { CommandPillPopover } from './commandPills/CommandPillPopover';
+import { canPersistWorkspaceHydratedState } from '../../utils/workspaceHydration';
 
 export interface AIInputRef {
   focus: () => void;
@@ -89,6 +91,11 @@ interface AIInputProps {
   effortLevel?: EffortLevel;
   onEffortLevelChange?: (level: EffortLevel) => void;
   showEffortLevel?: boolean;
+  thinkingMode?: ThinkingMode;
+  onThinkingModeChange?: (mode: ThinkingMode) => void;
+  showThinkingToggle?: boolean;
+  reasoningControlsDisabled?: boolean;
+  reasoningControlsDisabledTitle?: string;
 
   // Token usage display support (for Claude Code)
   tokenUsage?: {
@@ -168,6 +175,11 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     effortLevel,
     onEffortLevelChange,
     showEffortLevel,
+    thinkingMode,
+    onThinkingModeChange,
+    showThinkingToggle,
+    reasoningControlsDisabled = false,
+    reasoningControlsDisabledTitle,
     tokenUsage,
     provider,
     onQueue,
@@ -319,6 +331,9 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
     const [isLoadingHeight, setIsLoadingHeight] = useState(true);
     const [isResizing, setIsResizing] = useState(false);
     const isResizingRef = useRef(false);
+    const heightLoadGenerationRef = useRef(0);
+    const loadedHeightWorkspaceRef = useRef<string | null>(null);
+    const heightChangedBeforeLoadRef = useRef(false);
     const resizeStartY = useRef<number>(0);
     const resizeStartHeight = useRef<number>(DEFAULT_MAX_PROMPT_HEIGHT);
 
@@ -336,22 +351,34 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
     // Load prompt box height from workspace state on mount
     useEffect(() => {
+      const loadGeneration = ++heightLoadGenerationRef.current;
+      loadedHeightWorkspaceRef.current = null;
+      heightChangedBeforeLoadRef.current = false;
+
       if (!workspacePath) {
+        setUserSetHeight(null);
         setIsLoadingHeight(false);
         return;
       }
 
+      setIsLoadingHeight(true);
+
       const loadHeight = async () => {
         try {
           const workspaceState = await window.electronAPI.invoke('workspace:get-state', workspacePath);
+          if (heightLoadGenerationRef.current !== loadGeneration) return;
           const savedHeight = workspaceState?.aiPanel?.promptBoxHeight;
-          if (savedHeight !== undefined) {
-            setUserSetHeight(savedHeight);
+          if (!heightChangedBeforeLoadRef.current) {
+            setUserSetHeight(savedHeight ?? null);
           }
+          loadedHeightWorkspaceRef.current = workspacePath;
         } catch (err) {
+          if (heightLoadGenerationRef.current !== loadGeneration) return;
           console.error('[AIInput] Failed to load prompt box height:', err);
         } finally {
-          setIsLoadingHeight(false);
+          if (heightLoadGenerationRef.current === loadGeneration) {
+            setIsLoadingHeight(false);
+          }
         }
       };
       loadHeight();
@@ -359,7 +386,13 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
 
     // Save prompt box height to workspace state when it changes
     useEffect(() => {
-      if (!workspacePath || isLoadingHeight) return;
+      if (!workspacePath) return;
+      if (!canPersistWorkspaceHydratedState(
+        workspacePath,
+        loadedHeightWorkspaceRef.current,
+        heightChangedBeforeLoadRef.current,
+      )) return;
+      if (isLoadingHeight && !heightChangedBeforeLoadRef.current) return;
 
       const saveHeight = async () => {
         try {
@@ -399,6 +432,7 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
           MIN_PROMPT_HEIGHT,
           Math.min(MAX_PROMPT_HEIGHT, resizeStartHeight.current + deltaY)
         );
+        heightChangedBeforeLoadRef.current = true;
         setUserSetHeight(newHeight);
       };
 
@@ -1366,6 +1400,16 @@ export const AIInput = forwardRef<AIInputRef, AIInputProps>(
               <EffortLevelSelector
                 level={effortLevel}
                 onLevelChange={onEffortLevelChange}
+                disabled={reasoningControlsDisabled}
+                disabledTitle={reasoningControlsDisabledTitle}
+              />
+            )}
+            {showThinkingToggle && onThinkingModeChange && thinkingMode && (
+              <ThinkingModeSelector
+                mode={thinkingMode}
+                onModeChange={onThinkingModeChange}
+                disabled={reasoningControlsDisabled}
+                disabledTitle={reasoningControlsDisabledTitle}
               />
             )}
             {workspacePath && (

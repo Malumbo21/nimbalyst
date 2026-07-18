@@ -15,9 +15,8 @@ import { store } from '@nimbalyst/runtime/store';
 import { DocumentModelRegistry } from '../services/document-model/DocumentModelRegistry';
 import { aiApi } from '../services/aiApi';
 import { getFileName } from '../utils/pathUtils';
-import { isCollabUri, buildCollabUri } from '../utils/collabUri';
+import { isCollabUri } from '../utils/collabUri';
 import {
-  registerDocumentInIndex,
   updateSharedDocumentTitle,
   removeSharedDocument,
   moveSharedDocument,
@@ -27,8 +26,9 @@ import {
   removeSharedFolder,
   collectFolderSubtree,
   sharedFoldersAtom,
-  activeTeamOrgIdAtom,
 } from '../store/atoms/collabDocuments';
+import { getCollaborativeDocumentTypeCatalog } from '../services/CollaborativeDocumentTypeCatalog';
+import { createCollaborativeDocument } from '../services/collaborativeDocumentCreationOrchestrator';
 import type { ContentMode } from '../types/WindowModeTypes';
 import { dialogRef } from '../contexts/DialogContext';
 import { DIALOG_IDS } from '../dialogs';
@@ -107,9 +107,6 @@ interface UseIPCHandlersProps {
   handleWorkspaceFileSelect: (filePath: string) => Promise<void>;
   openWelcomeTab: () => Promise<void>;
   openFeedback: () => void;
-  handleNextTab?: () => void;
-  handlePreviousTab?: () => void;
-
   // State setters
   setIsApiKeyDialogOpen: (open: boolean) => void;
   setWorkspaceMode: (mode: boolean) => void;
@@ -119,14 +116,10 @@ interface UseIPCHandlersProps {
   // NOTE: setCurrentFilePath/setCurrentFileName removed - now using refs to prevent re-renders
   // NOTE: setIsDirty removed - TabEditor owns dirty state and calls setDocumentEdited directly
   // NOTE: setIsNewFileDialogOpen removed - EditorMode manages dialogs
-  setIsAIChatCollapsed: (collapsed: boolean) => void;
-  setAIChatWidth: (width: number) => void;
-  setIsAIChatStateLoaded: (loaded: boolean) => void;
   setSessionToLoad: (session: { sessionId: string; workspacePath?: string } | null) => void;
   // NOTE: setIsHistoryDialogOpen removed - EditorMode manages dialogs
   setIsKeyboardShortcutsDialogOpen: (open: boolean) => void;
   setTheme: (theme: any) => void;
-  setAIPlanningMode?: (enabled: boolean) => void;
 
   // Refs
   // NOTE: initialContentRef removed - TabEditor tracks initialContent per-tab
@@ -173,20 +166,13 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
     handleWorkspaceFileSelect,
     openWelcomeTab,
     openFeedback,
-    handleNextTab,
-    handlePreviousTab,
-
     // State setters
     setIsApiKeyDialogOpen,
     setWorkspaceMode,
     setWorkspacePath,
     setWorkspaceName,
-    setIsAIChatCollapsed,
-    setAIChatWidth,
-    setIsAIChatStateLoaded,
     setSessionToLoad,
     setIsKeyboardShortcutsDialogOpen,
-    setAIPlanningMode,
     setTheme,
 
     // Refs
@@ -224,20 +210,14 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
     handleWorkspaceFileSelect,
     openWelcomeTab,
     openFeedback,
-    handleNextTab,
-    handlePreviousTab,
     setIsApiKeyDialogOpen,
     setWorkspaceMode,
     setWorkspacePath,
     setWorkspaceName,
     // NOTE: setCurrentFilePath/setCurrentFileName removed - using refs directly
     // NOTE: setIsDirty removed - dirty state is tracked via isDirtyRef to avoid re-renders
-    setIsAIChatCollapsed,
-    setAIChatWidth,
-    setIsAIChatStateLoaded,
     setSessionToLoad,
     setIsKeyboardShortcutsDialogOpen,
-    setAIPlanningMode,
     setTheme,
   });
 
@@ -257,18 +237,12 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
     handleWorkspaceFileSelect,
     openWelcomeTab,
     openFeedback,
-    handleNextTab,
-    handlePreviousTab,
     setIsApiKeyDialogOpen,
     setWorkspaceMode,
     setWorkspacePath,
     setWorkspaceName,
-    setIsAIChatCollapsed,
-    setAIChatWidth,
-    setIsAIChatStateLoaded,
     setSessionToLoad,
     setIsKeyboardShortcutsDialogOpen,
-    setAIPlanningMode,
     setTheme,
   };
 
@@ -305,6 +279,7 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
 
     // Set up listeners and store cleanup functions
     const cleanupFns: Array<() => void> = [];
+    let workspaceOpenRequestVersion = 0;
 
     cleanupFns.push(window.electronAPI.onFileNew(handlersRef.current.handleNew));
 
@@ -314,6 +289,7 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
     cleanupFns.push(window.electronAPI.onFileSave(handlersRef.current.handleSave));
     cleanupFns.push(window.electronAPI.onFileSaveAs(handlersRef.current.handleSaveAs));
     cleanupFns.push(window.electronAPI.onWorkspaceOpened(async (data) => {
+      const requestVersion = ++workspaceOpenRequestVersion;
       if (LOG_CONFIG.WORKSPACE_OPS) console.log('[WORKSPACE] Workspace opened:', data);
       handlersRef.current.setWorkspaceMode(true);
       handlersRef.current.setWorkspacePath(data.workspacePath);
@@ -326,25 +302,19 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
       // NOTE: contentVersion removed - EditorContainer handles remounting via destroy/create
       isInitializedRef.current = false;
 
-      // Restore AI Chat state when opening a workspace
+      // Restore the last AI chat session when opening a workspace. Layout is
+      // hydrated and persisted by EditorMode's workspace-keyed atoms.
       try {
         const workspaceState = await window.electronAPI.invoke('workspace:get-state', data.workspacePath);
+        if (requestVersion !== workspaceOpenRequestVersion) return;
         const aiChatState = workspaceState?.aiPanel;
         // console.log('Restoring AI Chat state for workspace:', aiChatState);
-        if (aiChatState) {
-          handlersRef.current.setIsAIChatCollapsed(aiChatState.collapsed);
-          handlersRef.current.setAIChatWidth(aiChatState.width);
-          if (handlersRef.current.setAIPlanningMode) {
-            handlersRef.current.setAIPlanningMode(aiChatState.planningModeEnabled ?? true);
-          }
-          if (aiChatState.currentSessionId) {
-            handlersRef.current.setSessionToLoad({ sessionId: aiChatState.currentSessionId, workspacePath: data.workspacePath });
-          }
+        if (aiChatState?.currentSessionId) {
+          handlersRef.current.setSessionToLoad({ sessionId: aiChatState.currentSessionId, workspacePath: data.workspacePath });
         }
-        handlersRef.current.setIsAIChatStateLoaded(true);
       } catch (error) {
+        if (requestVersion !== workspaceOpenRequestVersion) return;
         console.error('Failed to restore AI Chat state:', error);
-        handlersRef.current.setIsAIChatStateLoaded(true);
       }
 
       // Open welcome tab if no tabs are open
@@ -500,25 +470,10 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
         // Set the session to load - AIChat will pick this up
         handlersRef.current.setSessionToLoad(data);
 
-        // Make sure AI Chat is visible
-        handlersRef.current.setIsAIChatCollapsed(false);
       }));
     }
 
     // NOTE: view-history IPC event (Cmd+Y) is handled in App.tsx which gates it by active mode
-
-    // Tab navigation handlers - delegate to App.tsx for mode-aware routing
-    if (window.electronAPI.onNextTab && handlersRef.current.handleNextTab) {
-      cleanupFns.push(window.electronAPI.onNextTab(() => {
-        handlersRef.current.handleNextTab?.();
-      }));
-    }
-
-    if (window.electronAPI.onPreviousTab && handlersRef.current.handlePreviousTab) {
-      cleanupFns.push(window.electronAPI.onPreviousTab(() => {
-        handlersRef.current.handlePreviousTab?.();
-      }));
-    }
 
     // Approve/Reject action handlers
     if (window.electronAPI.onApproveAction) {
@@ -712,29 +667,23 @@ export function useIPCHandlers(props: UseIPCHandlersProps) {
             ? await resolveSharedFolderPath(folderPath)
             : (parentFolderId ?? null);
 
-          const documentId = crypto.randomUUID();
-          await registerDocumentInIndex(documentId, title, documentType || 'markdown');
-          if (targetParentId) {
-            moveSharedDocument(documentId, targetParentId);
-          }
+          const requestedDocumentType = documentType || 'markdown';
+          const catalog = getCollaborativeDocumentTypeCatalog();
+          const fileExtension = catalog.inferFileExtension(requestedDocumentType, title);
+          const resolution = catalog.resolveMetadata(requestedDocumentType, fileExtension);
+          if (resolution.state !== 'ready') throw new Error(resolution.reason);
 
-          // Best-effort content seed: only possible when an editor for the doc is
-          // already mounted (a Y.Doc-backed CollaborativeTabEditor). A freshly
-          // created doc has none, so it is seeded when it is next opened.
-          if (initialContent) {
-            const orgId = store.get(activeTeamOrgIdAtom);
-            if (orgId) {
-              const collabUri = buildCollabUri(orgId, documentId);
-              if (editorRegistry.has(collabUri)) {
-                const streamId = `mcp-seed-${Date.now()}-${Math.random()}`;
-                editorRegistry.startStreaming(collabUri, { id: streamId, position: 'end', mode: 'append' });
-                editorRegistry.streamContent(collabUri, streamId, initialContent);
-                editorRegistry.endStreaming(collabUri, streamId);
-              }
-            }
-          }
+          const document = await createCollaborativeDocument({
+            descriptor: resolution.descriptor,
+            requestedName: title,
+            parentFolderId: targetParentId,
+            sourceContent: initialContent ?? '',
+          });
 
-          window.electronAPI.sendMcpCollabIndexResult(resultChannel, { success: true, documentId });
+          window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
+            success: true,
+            documentId: document.documentId,
+          });
         } catch (error) {
           window.electronAPI.sendMcpCollabIndexResult(resultChannel, {
             success: false,

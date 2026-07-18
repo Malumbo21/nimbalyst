@@ -20,3 +20,4 @@ export {
   defaultExportRevisionSnapshot,
   defaultRestoreRevisionSnapshot,
 } from './snapshot';
+export { exportCollabRecoveryPlaintext } from './recovery';

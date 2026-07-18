@@ -15,6 +15,7 @@ import { updateNativeTheme, updateWindowTitleBars } from './theme/ThemeManager';
 import { restoreSessionState, saveSessionState } from './session/SessionState';
 import { getRestartSignalPath } from './utils/appPaths';
 import { createWorkspaceManagerWindow, setupWorkspaceManagerHandlers, wasWorkspaceManagerManuallyClosed } from './window/WorkspaceManagerWindow.ts';
+import { setupTeamManagementHandlers } from './window/TeamManagementWindow';
 import { showSplashScreen, closeSplashScreen } from './window/SplashScreen';
 import { registerFileHandlers } from './ipc/FileHandlers';
 import { registerWorkspaceHandlers } from './ipc/WorkspaceHandlers.ts';
@@ -43,6 +44,7 @@ import { registerUsageAnalyticsHandlers } from './ipc/UsageAnalyticsHandlers';
 import { registerWorktreeHandlers } from './ipc/WorktreeHandlers';
 import { registerPullRequestHandlers, stopPullRequestPollScheduler } from './ipc/PullRequestHandlers';
 import { registerReadReceiptHandlers } from './ipc/ReadReceiptHandlers';
+import { registerTrackerPersonalStateHandlers } from './ipc/TrackerPersonalStateHandlers';
 import { registerWakeupHandlers } from './ipc/WakeupHandlers';
 import { registerBlitzHandlers } from './ipc/BlitzHandlers';
 import { registerProjectMigrationHandlers } from './ipc/ProjectMigrationHandlers';
@@ -171,14 +173,20 @@ import { AnalyticsService } from "./services/analytics/AnalyticsService.ts";
 import { registerAnalyticsHandlers } from "./ipc/AnalyticsHandlers.ts";
 import { registerFeatureUsageHandlers } from "./ipc/FeatureUsageHandlers.ts";
 import { FeatureUsageService, FEATURES } from "./services/FeatureUsageService.ts";
-import { shutdownStytchAuth, handleAuthCallback, isAuthenticated } from './services/StytchAuthService';
+import { shutdownStytchAuth, handleAuthCallback, isAuthenticated, getPersonalUserId } from './services/StytchAuthService';
 import { registerTrackerSyncHandlers, initializeTrackerSync } from './services/TrackerSyncManager';
 import { initTrackerSchemaService, updateTrackerSchemaWorkspace } from './services/TrackerSchemaService';
+import { initTrackerNavigationService } from './services/TrackerNavigationService';
 import { registerTeamHandlers, autoMatchTeamForWorkspace, getOrgScopedJwt, findTeamForWorkspace } from './services/TeamService';
 import { windowStates, windows, resolveActiveWorkspacePath } from './window/windowState';
 import { getRecentItems } from './utils/store';
 import { registerOrgKeyHandlers, getOrgKey } from './services/OrgKeyService';
 import { registerDocumentSyncHandlers } from './ipc/DocumentSyncHandlers';
+import { getCollabOutboxDrainCoordinator } from './services/CollabOutboxDrainerService';
+import { getCollabAssetOutboxDrainCoordinator } from './services/CollabAssetOutboxDrainCoordinator';
+import { getCollabAssetStore } from './services/CollabAssetStore';
+import { registerCollabBackupHandlers } from './ipc/CollabBackupHandlers';
+import { flushPendingCollabBackups } from './services/CollabBackupService';
 import { registerBuiltinCollabContentAdapters } from './services/collabContentAdapterRegistration';
 import { registerCollabV3TestHandlers } from './ipc/CollabV3TestHandlers';
 import { getPermissionService } from './services/PermissionService';
@@ -1357,6 +1365,8 @@ app.whenReady().then(async () => {
     installCollabAssetProtocolHandler({
         getOrgKey,
         getOrgScopedJwt,
+        getAccountId: getPersonalUserId,
+        assetStore: getCollabAssetStore(),
         getCollabHttpUrl: () => {
             const config = getSessionSyncConfig();
             const isDev = process.env.NODE_ENV !== 'production';
@@ -1555,6 +1565,7 @@ app.whenReady().then(async () => {
     await registerSessionStateHandlers();
     await registerThemeHandlers();
     setupWorkspaceManagerHandlers();
+    setupTeamManagementHandlers();
     setupSessionFileHandlers();
     registerSlashCommandHandlers();
     registerActionPromptHandlers();
@@ -1580,6 +1591,7 @@ app.whenReady().then(async () => {
     registerWorktreeHandlers();
     registerPullRequestHandlers();
     registerReadReceiptHandlers();
+    registerTrackerPersonalStateHandlers();
     registerWakeupHandlers();
     registerBlitzHandlers();
     registerProjectMigrationHandlers();
@@ -1608,6 +1620,7 @@ app.whenReady().then(async () => {
     // serve Quick Open semantic search.
     SemanticCatalogService.getInstance().start();
     initTrackerSchemaService(); // Register IPC handlers + load built-in schemas
+    initTrackerNavigationService();
 
     // Initialize commit-tracker linking (listens to GitRefWatcher for all commits)
     commitTrackerLinker.initialize({ getDatabase: () => database });
@@ -1617,6 +1630,9 @@ app.whenReady().then(async () => {
     registerOrgKeyHandlers();
     registerBuiltinCollabContentAdapters();
     registerDocumentSyncHandlers();
+    getCollabOutboxDrainCoordinator().start();
+    getCollabAssetOutboxDrainCoordinator().start();
+    registerCollabBackupHandlers();
     registerCollabV3TestHandlers();
     markEnd('ipc-handlers');
 
@@ -2160,10 +2176,10 @@ app.whenReady().then(async () => {
     // re-sent on next launch (NIM-615).
     try {
       const { getQueuedPromptsStore } = await import('./services/RepositoryManager');
-      const { completed, rolledBack } = await getQueuedPromptsStore().sweepExecutingOnBoot();
-      if (completed > 0 || rolledBack > 0) {
+      const { completed, failed, rolledBack } = await getQueuedPromptsStore().sweepExecutingOnBoot();
+      if (completed > 0 || failed > 0 || rolledBack > 0) {
         logger.main.info(
-          `[Main] Boot sweep: ${completed} delivered prompt(s) marked completed, ${rolledBack} undelivered prompt(s) rolled back to pending`
+          `[Main] Boot sweep: ${completed} answered prompt(s) marked completed, ${failed} delivered-but-unanswered prompt(s) marked failed, ${rolledBack} undelivered prompt(s) rolled back to pending`
         );
       }
     } catch (sweepErr) {
@@ -2721,6 +2737,8 @@ app.on('activate', () => {
 
 // Before quit handler
 app.on('before-quit', async (event) => {
+    getCollabOutboxDrainCoordinator().stop();
+    getCollabAssetOutboxDrainCoordinator().stop();
     console.log('[QUIT] before-quit event triggered');
 
     // If auto-updater is updating, don't prevent quit
@@ -2754,6 +2772,7 @@ app.on('before-quit', async (event) => {
         // Save session state so the session is restored after restart
         try {
             await saveSessionState();
+            await flushPendingCollabBackups();
             console.log('[QUIT] Session state saved for restart');
         } catch (error) {
             console.error('[QUIT] Error saving session state for restart:', error);
@@ -2807,6 +2826,10 @@ app.on('before-quit', async (event) => {
 
     // Mark app as quitting to prevent interval operations
     isAppQuitting = true;
+
+    // Live collaboration backups are debounced. Flush the latest decrypted
+    // snapshots before renderer teardown so a quick quit cannot drop them.
+    await flushPendingCollabBackups();
 
     // Setup force quit timer - allow enough time for database backup + close
     // Database operations: backup (up to 5s) + close worker (up to 5s) + buffer (5s/3s)

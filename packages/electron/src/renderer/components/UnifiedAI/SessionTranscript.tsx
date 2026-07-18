@@ -47,6 +47,7 @@ import { isClaudeCliTerminalSession } from './claudeCliInputRouting';
 import { diffTreeGroupByDirectoryAtom, setDiffTreeGroupByDirectoryAtom } from '../../store/atoms/projectState';
 import {
   sessionDraftInputAtom,
+  sessionDraftHydratedAtom,
   sessionDraftAttachmentsAtom,
   sessionStoreAtom,
   sessionLoadedAtom,
@@ -59,6 +60,7 @@ import {
   sessionWorktreePathAtom,
   sessionDocumentContextAtom,
   sessionEffortLevelRawAtom,
+  sessionThinkingModeRawAtom,
   sessionLoadingAtom,
   sessionModeAtom,
   sessionModelAtom,
@@ -89,7 +91,7 @@ import {
   loadInitialQueuedPrompts,
 } from '../../store';
 import { streamCompletionSignalAtom } from '../../store/atoms/sessionTranscript';
-import { convertToWorkstreamAtom, sessionPromptAdditionsAtom, sessionLastSubmitAtAtom, sessionDraftLocalModifiedAtAtom, nextOptimisticId } from '../../store/atoms/sessions';
+import { canPersistSessionDraft, convertToWorkstreamAtom, sessionPromptAdditionsAtom, sessionLastSubmitAtAtom, sessionDraftLocalModifiedAtAtom, nextOptimisticId } from '../../store/atoms/sessions';
 import { clearAIInputHistoryAtom } from '../../store/atoms/aiInputUndo';
 import {
   cliTerminalExpandedAtom,
@@ -103,8 +105,8 @@ import {
 } from '../../store/atoms/terminals';
 import { scrollToTeammateAtom, scrollToMessageAtom, requestOpenSessionAtom } from '../../store/atoms/agentMode';
 import { usePostHog } from 'posthog-js/react';
-import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, chatShowToolCallsAtom } from '../../store/atoms/appSettings';
-import { supportsEffortLevel, parseEffortLevel, type EffortLevel } from '../../utils/modelUtils';
+import { setAgentModeSettingsAtom, showPromptAdditionsAtom, hasExternalEditorAtom, externalEditorNameAtom, openInExternalEditorAtom, defaultAgentModelAtom, defaultEffortLevelAtom, chatShowToolCallsAtom, developerModeAtom } from '../../store/atoms/appSettings';
+import { supportsEffortLevel, supportsThinkingToggle, parseEffortLevel, parseThinkingMode, type EffortLevel, type ThinkingMode } from '../../utils/modelUtils';
 import { buildPlanImplementationPrompt, resolvePlanFilePath } from '../../utils/pathUtils';
 import { resolveTranscriptClickPath } from '../../utils/resolveTranscriptClickPath';
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
@@ -369,8 +371,9 @@ const SessionAIInput = forwardRef<AIInputRef, SessionAIInputProps>(function Sess
   ref,
 ) {
   const [draftInput, setDraftInputRaw] = useAtom(sessionDraftInputAtom(sessionId));
+  const draftHydrated = useAtomValue(sessionDraftHydratedAtom(sessionId));
   const draftAttachments = useAtomValue(sessionDraftAttachmentsAtom(sessionId));
-  const setDraftLocalModifiedAt = useSetAtom(sessionDraftLocalModifiedAtAtom(sessionId));
+  const [draftLocalModifiedAt, setDraftLocalModifiedAt] = useAtom(sessionDraftLocalModifiedAtAtom(sessionId));
 
   const handleChange = useCallback((value: string) => {
     setDraftInputRaw(value);
@@ -380,12 +383,13 @@ const SessionAIInput = forwardRef<AIInputRef, SessionAIInputProps>(function Sess
   // Debounced persistence of draft input to database — survives restarts.
   useEffect(() => {
     if (!workspacePath) return;
+    if (!canPersistSessionDraft(draftHydrated, draftLocalModifiedAt)) return;
     const timeoutId = setTimeout(() => {
       window.electronAPI.invoke('ai:saveDraftInput', sessionId, draftInput, workspacePath)
         .catch(err => console.error('[SessionAIInput] Failed to persist draft input:', err));
     }, 1000);
     return () => clearTimeout(timeoutId);
-  }, [sessionId, draftInput, workspacePath]);
+  }, [sessionId, draftInput, draftHydrated, draftLocalModifiedAt, workspacePath]);
 
   return (
     <AIInput
@@ -463,6 +467,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const sessionWorktreePath = useAtomValue(sessionWorktreePathAtom(sessionId));
   const sessionDocumentContext = useAtomValue(sessionDocumentContextAtom(sessionId));
   const rawEffortLevel = useAtomValue(sessionEffortLevelRawAtom(sessionId));
+  const rawThinkingMode = useAtomValue(sessionThinkingModeRawAtom(sessionId));
   const loadSessionData = useSetAtom(loadSessionDataAtom);
   const reloadSessionData = useSetAtom(reloadSessionDataAtom);
   const updateSessionStore = useSetAtom(updateSessionStoreAtom);
@@ -506,6 +511,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       metadata: {
         ...safeMetadata,
         effortLevel: rawEffortLevel ?? (safeMetadata as Record<string, unknown> | undefined)?.effortLevel ?? null,
+        thinkingMode: rawThinkingMode ?? (safeMetadata as Record<string, unknown> | undefined)?.thinkingMode ?? null,
         sessionStatus,
         currentTeammates: metadataTeammates,
         currentTodos,
@@ -521,6 +527,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
     sessionDocumentContext,
     sessionWorktreePath,
     rawEffortLevel,
+    rawThinkingMode,
     sessionStatus,
     metadataTeammates,
     currentTodos,
@@ -531,6 +538,12 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
   const effortLevel = useMemo(() => {
     return rawEffortLevel != null ? parseEffortLevel(rawEffortLevel) : defaultEffortLevel;
   }, [rawEffortLevel, defaultEffortLevel]);
+  // Extended-thinking is a power-user control: only surface the selector in
+  // developer mode. When hidden, thinkingMode is never set, so the default
+  // (adaptive/enabled) applies.
+  const developerMode = useAtomValue(developerModeAtom);
+  const showThinkingToggle = useMemo(() => developerMode && supportsThinkingToggle(currentModel), [developerMode, currentModel]);
+  const thinkingMode = useMemo(() => parseThinkingMode(rawThinkingMode), [rawThinkingMode]);
 
   // Memoize the teammate list passed to AgentTranscriptPanel so its memo
   // comparison doesn't see a new array reference on every keystroke. Without
@@ -1546,6 +1559,16 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       previous_level: previousLevel,
     });
   }, [sessionId, updateSessionStore, setAgentModeSettings, effortLevel, posthog]);
+
+  const handleThinkingModeChange = useCallback(async (mode: ThinkingMode) => {
+    const previousMode = thinkingMode;
+    await updateSessionMetadataField(sessionId, 'thinkingMode', mode, null, updateSessionStore);
+    posthog?.capture('ai_thinking_mode_changed', {
+      thinking_mode: mode,
+      previous_mode: previousMode,
+      model: currentModel,
+    });
+  }, [sessionId, updateSessionStore, thinkingMode, currentModel, posthog]);
 
   const handleCommandSelect = useCallback((command: string) => {
     setDraftInput(command);
@@ -2597,6 +2620,9 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
         effortLevel={effortLevel}
         onEffortLevelChange={handleEffortLevelChange}
         showEffortLevel={isClaudeCliTerminalSession(provider) && cliSessionCommitted ? false : showEffortLevel}
+        thinkingMode={thinkingMode}
+        onThinkingModeChange={handleThinkingModeChange}
+        showThinkingToggle={isClaudeCliTerminalSession(provider) && cliSessionCommitted ? false : showThinkingToggle}
         tokenUsage={tokenUsage}
         provider={provider}
         onQueue={handleQueue}

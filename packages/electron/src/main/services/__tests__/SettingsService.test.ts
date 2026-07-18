@@ -75,8 +75,10 @@ describe('SettingsService', () => {
     expect(svc.get('ai.defaultProvider')).toBe('claude-code');
     expect(svc.get('ai.chatShowToolCalls')).toBe(true);
     expect(svc.get('ai.apiKey.anthropic')).toBe('');
-    // Subscription CLI is a registered provider key, default-enabled like the SDK.
-    expect(svc.get('ai.provider.claude-code-cli')).toMatchObject({ enabled: true });
+    // Subscription CLI is off by default (opt-in).
+    expect(svc.get('ai.provider.claude-code-cli')).toMatchObject({ enabled: false });
+    // Codex (app server) is on by default.
+    expect(svc.get('ai.provider.openai-codex')).toMatchObject({ enabled: true });
   });
 
   it('persists a claude-code-cli hidden-model denylist round-trip', async () => {

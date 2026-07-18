@@ -10,6 +10,7 @@
  * tracker type, so projects without PR-referencing items simply don't see it.
  */
 
+import type { JSX } from 'react';
 import { useMemo } from 'react';
 import { useAtomValue } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';

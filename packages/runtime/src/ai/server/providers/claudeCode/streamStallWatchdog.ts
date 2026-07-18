@@ -21,8 +21,18 @@
  * disarmed so long-running work is never reaped.
  */
 
-/** Default silence window before a pre-result stream is declared stalled. */
-export const DEFAULT_STREAM_STALL_MS = 120_000;
+/**
+ * Default silence window before a pre-result stream is declared stalled.
+ *
+ * Sized to sit above the SDK's real heartbeat jitter. The watchdog relies on the
+ * `thinking_tokens` chunk to keep an armed pre-result stream alive, but that chunk is a
+ * variable-cadence estimated-token PROGRESS TICK, not a ~1Hz wall-clock keepalive.
+ * Measured against real persisted chunks, intra-turn tick gaps averaged ~5s but reached
+ * ~589s. The original 120s window had almost no margin over that jitter and reaped
+ * legitimate long extended-thinking turns (#802). 10 minutes clears the observed max
+ * while still eventually reaping a genuinely dead stream (the NIM-1481 case).
+ */
+export const DEFAULT_STREAM_STALL_MS = 600_000;
 
 /**
  * Resolve the stall window, allowing an env override so tests can use a short

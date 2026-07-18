@@ -179,8 +179,10 @@ export class MetaAgentService {
           this.spawnSession(callerSessionId, workspaceId, args),
         getSessionStatus: (_metaSessionId, workspaceId, targetSessionId) =>
           this.getSessionStatusJson(targetSessionId, workspaceId),
-        getSessionResult: (_metaSessionId, workspaceId, targetSessionId) =>
-          this.getSessionResultJson(targetSessionId, workspaceId),
+        getSessionResult: (_metaSessionId, workspaceId, targetSessionId, options) =>
+          this.getSessionResultJson(targetSessionId, workspaceId, options),
+        listQueuedPrompts: (_metaSessionId, workspaceId, targetSessionId, options) =>
+          this.listQueuedPromptsJson(targetSessionId, workspaceId, options),
         sendPrompt: (_metaSessionId, workspaceId, targetSessionId, prompt) =>
           this.sendPromptToSession(targetSessionId, workspaceId, prompt),
         respondToPrompt: (_metaSessionId, workspaceId, args) =>
@@ -825,9 +827,57 @@ export class MetaAgentService {
     return JSON.stringify(result, null, 2);
   }
 
-  private async getSessionResultJson(sessionId: string, workspaceId: string): Promise<string> {
-    const data = await this.buildSessionResultData(sessionId, workspaceId);
+  private async getSessionResultJson(
+    sessionId: string,
+    workspaceId: string,
+    options: { includeFullResponse?: boolean } = {}
+  ): Promise<string> {
+    const data = await this.buildSessionResultData(
+      sessionId,
+      workspaceId,
+      undefined,
+      options.includeFullResponse ?? true
+    );
     return JSON.stringify(data, null, 2);
+  }
+
+  private async listQueuedPromptsJson(
+    sessionId: string,
+    workspaceId: string,
+    options: { includeCompleted?: boolean; includePromptText?: boolean } = {}
+  ): Promise<string> {
+    if (!sessionId) {
+      throw new Error('sessionId is required');
+    }
+
+    const session = await AISessionsRepository.get(sessionId);
+    if (!session || session.workspacePath !== workspaceId) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    const { getQueuedPromptsStore } = await import('./RepositoryManager');
+    const queueStore = getQueuedPromptsStore();
+    const prompts = await queueStore.listForSession(sessionId, {
+      includeCompleted: options.includeCompleted === true,
+    });
+
+    return JSON.stringify({
+      sessionId,
+      count: prompts.length,
+      includeCompleted: options.includeCompleted === true,
+      prompts: prompts.map((prompt) => ({
+        id: prompt.id,
+        status: prompt.status,
+        createdAt: prompt.createdAt,
+        claimedAt: prompt.claimedAt ?? null,
+        completedAt: prompt.completedAt ?? null,
+        errorMessage: prompt.errorMessage ?? null,
+        promptPreview: prompt.prompt.length > 300
+          ? `${prompt.prompt.slice(0, 300)}...`
+          : prompt.prompt,
+        ...(options.includePromptText === true ? { prompt: prompt.prompt } : {}),
+      })),
+    }, null, 2);
   }
 
   private async sendPromptToSession(sessionId: string, workspaceId: string, prompt: string): Promise<string> {

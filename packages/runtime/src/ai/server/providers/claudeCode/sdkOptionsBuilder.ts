@@ -11,7 +11,7 @@ import path from 'path';
 import { app } from 'electron';
 import { ClaudeCodeDeps } from './dependencyInjection';
 import { resolveClaudeAgentCliPath } from './cliPathResolver';
-import { DEFAULT_EFFORT_LEVEL } from '../../effortLevels';
+import { type ThinkingMode } from '../../effortLevels';
 
 type SessionMode = 'planning' | 'agent' | 'auto' | undefined;
 
@@ -38,7 +38,7 @@ export interface BuildSdkOptionsDeps {
     resolveTeamContext: (sessionId?: string) => Promise<string | undefined>;
   };
   sessions: { getSessionId: (sessionId: string) => string | null | undefined };
-  config: { model?: string; apiKey?: string; effortLevel?: string };
+  config: { model?: string; apiKey?: string; effortLevel?: string; thinkingMode?: ThinkingMode };
   abortController: AbortController;
 }
 
@@ -83,6 +83,14 @@ export interface BuildSdkOptionsResult {
   promptInput: AsyncIterable<SDKUserMessage>;
   promptController: PromptStreamController;
   helperMethod: 'native' | 'custom';
+}
+
+function canDisableThinkingForModel(model: string | undefined): boolean {
+  const normalized = model?.toLowerCase() ?? '';
+  if (!normalized || normalized.includes('fable') || normalized.includes('haiku')) {
+    return false;
+  }
+  return normalized.includes('opus') || normalized.includes('sonnet');
 }
 
 export function createPersistentPromptStream(
@@ -215,6 +223,7 @@ export async function buildSdkOptions(
   }
   const effectivePath = customPath || resolvedBinaryPath;
   // console.log(`[CLAUDE-CODE] Binary path: custom=${customPath || '(none)'} resolved=${resolvedBinaryPath ?? '(none)'} effective=${effectivePath ?? '(none)'}`);
+  const resolvedModel = resolveModelVariant();
 
   const options: any = {
     pathToClaudeCodeExecutable: effectivePath,
@@ -227,9 +236,18 @@ export async function buildSdkOptions(
         },
     settingSources,
     mcpServers: await mcpConfigService.getMcpServersConfig({ sessionId, workspacePath: mcpConfigWorkspacePath || workspacePath }),
+    // NIM-843 (SDK path): use ONLY the mcpServers we pass above and ignore the
+    // SDK's own discovery (~/.claude.json, project .mcp.json, user settings,
+    // claude.ai connectors). settingSources includes 'user'/'project' to load
+    // slash commands/skills/hooks, but that also re-merges their mcpServers on
+    // top of our filtered list — leaking user-disabled third-party servers into
+    // sessions, ignoring the `disabled`/`enabledForProviders` toggle. strictMcpConfig
+    // gates MCP only, so commands/skills/hooks from settingSources still load.
+    // This mirrors the CLI path's `--strict-mcp-config` (claudeCliSpawnConfig.ts).
+    strictMcpConfig: true,
     cwd: workspacePath,
     abortController,
-    model: resolveModelVariant(),
+    model: resolvedModel,
     // IMPORTANT: Do NOT add manual tool restrictions or prompt injections for plan mode here.
     // The SDK's `permissionMode: 'plan'` natively enforces planning restrictions (scopes
     // Write to the plan file only). Manual filtering was removed in favour of this approach.
@@ -261,6 +279,14 @@ export async function buildSdkOptions(
       'PermissionDenied': [{ hooks: [toolHooksService.createPermissionDeniedHook()] }],
     },
   };
+
+  if (config.thinkingMode === 'disabled') {
+    if (canDisableThinkingForModel(resolvedModel)) {
+      options.thinking = { type: 'disabled' as const };
+    } else {
+      console.warn(`[CLAUDE-CODE] Extended thinking cannot be disabled for model "${resolvedModel}"; omitting SDK thinking option.`);
+    }
+  }
 
   if (currentMode === 'planning') {
     console.log('[CLAUDE-CODE] Plan mode active: delegating tool restrictions to SDK permissionMode=plan');
@@ -343,7 +369,10 @@ export async function buildSdkOptions(
     // the official CLI and removes that asymmetry. The user can still
     // override via their own env var if they want the original sdk-ts label.
     ...(process.env.CLAUDE_CODE_ENTRYPOINT == null && { CLAUDE_CODE_ENTRYPOINT: 'cli' }),
-    ...(config.effortLevel && config.effortLevel !== DEFAULT_EFFORT_LEVEL && {
+    // The Claude CLI currently defaults to xhigh when this variable is absent.
+    // Always forward a resolved Nimbalyst selection, including "high", so the
+    // effort shown in the selector matches the request sent to the CLI.
+    ...(config.effortLevel && {
       CLAUDE_CODE_EFFORT_LEVEL: config.effortLevel
     }),
     // The bundled claude binary runs a per-tool idle-timeout watchdog (default

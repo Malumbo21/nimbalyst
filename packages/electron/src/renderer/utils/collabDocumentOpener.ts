@@ -11,6 +11,11 @@
 
 import { buildCollabUri } from './collabUri';
 import { logger } from './logger';
+import {
+  getSharedDocumentDisplayName,
+  normalizeCollabPath,
+  UNRESOLVED_SHARED_DOCUMENT_NAME,
+} from '../components/CollabMode/collabTree';
 
 /**
  * Configuration for opening a collaborative document.
@@ -21,6 +26,8 @@ export interface CollabDocumentConfig {
   orgId: string;
   documentId: string;
   title: string;
+  /** Last-known logical path used while the shared index resolves. */
+  displayPath?: string;
   /**
    * Epic H2 key custody. `legacy-e2e` (default): client encrypts/decrypts doc
    * data with `documentKey`. `server-managed`: the server holds the per-team
@@ -48,6 +55,8 @@ export interface CollabDocumentConfig {
   /** Optional extra query appended to revision-history HTTP requests. */
   urlExtraQuery?: string;
   userId: string;
+  /** Stable local account identity used to partition encrypted replicas. */
+  accountId: string;
   /** Human-readable display name (first+last from Stytch, falls back to email). */
   userName?: string;
   /** User's email address. */
@@ -67,6 +76,10 @@ export interface CollabDocumentConfig {
    * for existing shared docs created before the type field existed.
    */
   documentType?: string;
+  /** Explicit V2 type metadata retained across create/open/restore. */
+  metadataVersion?: 2;
+  fileExtension?: string;
+  editorId?: string;
   /**
    * Factory for creating WebSocket connections.
    * When running in Electron, this proxies WebSocket connections through
@@ -90,11 +103,42 @@ export function getCollabConfig(uri: string): CollabDocumentConfig | undefined {
   return collabConfigRegistry.get(uri);
 }
 
+/** Keep the connection config's warm display metadata current across index gaps. */
+export function updateCollabConfigDisplayMetadata(
+  uri: string,
+  metadata: { title?: string | null; displayPath?: string | null },
+): void {
+  const config = collabConfigRegistry.get(uri);
+  if (!config) return;
+
+  const resolvedTitle = getSharedDocumentDisplayName(metadata.title, config.documentId);
+  if (resolvedTitle !== UNRESOLVED_SHARED_DOCUMENT_NAME) {
+    config.title = resolvedTitle;
+  }
+
+  const normalizedPath = normalizeCollabPath(metadata.displayPath);
+  if (normalizedPath && normalizedPath !== config.documentId) {
+    config.displayPath = normalizedPath;
+  }
+}
+
 /**
  * Remove a collab config when the tab is closed.
  */
 export function removeCollabConfig(uri: string): void {
   collabConfigRegistry.delete(uri);
+}
+
+/** Remove every synthetic/real URI alias created for one document. */
+export function removeCollabConfigsForDocument(
+  workspacePath: string,
+  documentId: string,
+): void {
+  for (const [uri, config] of collabConfigRegistry) {
+    if (config.workspacePath === workspacePath && config.documentId === documentId) {
+      collabConfigRegistry.delete(uri);
+    }
+  }
 }
 
 /**
@@ -147,7 +191,7 @@ export function findCollabConfigByDocumentId(
  * });
  */
 export function openCollabDocument(options: CollabDocumentConfig & {
-  addTab: (filePath: string, content?: string, switchToTab?: boolean) => string | null;
+  addTab: (filePath: string, content?: string, switchToTab?: boolean, displayName?: string) => string | null;
 }): string {
   const { addTab, ...config } = options;
   const uri = buildCollabUri(config.orgId, config.documentId);
@@ -156,9 +200,14 @@ export function openCollabDocument(options: CollabDocumentConfig & {
   collabConfigRegistry.set(uri, config);
 
   try {
-    // Add the tab. Content is empty -- CollaborationPlugin hydrates from Y.Doc.
-    // The fileName will be overridden in the tab display layer using the title.
-    const tabId = addTab(uri, '', true);
+    // Add the tab with its display name in the same store transaction. Content
+    // is empty because CollaborationPlugin hydrates from Y.Doc.
+    const tabId = addTab(
+      uri,
+      '',
+      true,
+      getSharedDocumentDisplayName(config.displayPath || config.title, config.documentId),
+    );
     if (!tabId) {
       throw new Error(`Tab creation returned no tab ID for collaborative document ${config.documentId}`);
     }
@@ -379,18 +428,54 @@ export async function resolveCollabConfigForUri(
   documentId: string,
   title?: string,
   documentType?: string,
+  options: {
+    forceRefresh?: boolean;
+    metadata?: { metadataVersion: 2; fileExtension: string; editorId: string };
+  } = {},
 ): Promise<CollabDocumentConfig | null> {
   if (!window.electronAPI?.documentSync) return null;
+  let resolvedMetadata = options.metadata;
 
-  // Already resolved
-  const existing = collabConfigRegistry.get(uri);
-  if (existing) return existing;
+  if (options.forceRefresh) {
+    // Key rotation must bypass both URI and document-id aliases. Otherwise a
+    // freshly resolved cache key can still be populated with the old CryptoKey.
+    for (const [registeredUri, config] of collabConfigRegistry) {
+      if (
+        config.workspacePath === workspacePath &&
+        config.documentId === documentId
+      ) {
+        if (
+          !resolvedMetadata
+          && config.metadataVersion === 2
+          && config.fileExtension
+          && config.editorId
+        ) {
+          resolvedMetadata = {
+            metadataVersion: 2,
+            fileExtension: config.fileExtension,
+            editorId: config.editorId,
+          };
+        }
+        collabConfigRegistry.delete(registeredUri);
+      }
+    }
+  } else {
+    // Already resolved
+    const existing = collabConfigRegistry.get(uri);
+    if (existing) {
+      if (resolvedMetadata) Object.assign(existing, resolvedMetadata);
+      return existing;
+    }
 
-  // A seed/export/re-upload caller may only know the documentId (its URI is
-  // `collab://seed/<documentId>`); reuse the config resolved when the doc was
-  // opened rather than re-running the IPC resolution.
-  const byDocument = findCollabConfigByDocumentId(workspacePath, documentId);
-  if (byDocument) return byDocument;
+    // A seed/export/re-upload caller may only know the documentId (its URI is
+    // `collab://seed/<documentId>`); reuse the config resolved when the doc was
+    // opened rather than re-running the IPC resolution.
+    const byDocument = findCollabConfigByDocumentId(workspacePath, documentId);
+    if (byDocument) {
+      if (resolvedMetadata) Object.assign(byDocument, resolvedMetadata);
+      return byDocument;
+    }
+  }
 
   try {
     const result = await window.electronAPI.documentSync.open(
@@ -405,7 +490,7 @@ export async function resolveCollabConfigForUri(
       return null;
     }
 
-    const { orgId, title: resolvedTitle, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, orgKeyFingerprint, serverUrl, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
+    const { orgId, title: resolvedTitle, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, orgKeyFingerprint, serverUrl, accountId, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
     const resolvedDocumentType = documentType ?? result.config.documentType;
     const serverManaged = result.config.keyCustody === 'server-managed';
     const documentKey = serverManaged ? undefined : await importOrgKeyFromBase64(orgKeyBase64);
@@ -423,12 +508,14 @@ export async function resolveCollabConfigForUri(
       documentId,
       title: resolvedTitle,
       documentType: resolvedDocumentType,
+      ...resolvedMetadata,
       keyCustody: serverManaged ? 'server-managed' : 'legacy-e2e',
       documentKey,
       legacyDocumentKey: legacyDocumentKeys[0],
       legacyDocumentKeys,
       orgKeyFingerprint,
       serverUrl,
+      accountId,
       userId,
       userName,
       userEmail,
@@ -472,13 +559,17 @@ export async function openCollabDocumentViaIPC(options: {
   workspacePath: string;
   documentId: string;
   title?: string;
+  displayPath?: string;
   initialContent?: string;
   /**
    * Logical document type used by CollaborativeTabEditor to route to the
    * right editor branch (default: 'markdown' if omitted).
    */
   documentType?: string;
-  addTab: (filePath: string, content?: string, switchToTab?: boolean) => string | null;
+  metadataVersion?: 2;
+  fileExtension?: string;
+  editorId?: string;
+  addTab: (filePath: string, content?: string, switchToTab?: boolean, displayName?: string) => string | null;
 }): Promise<string> {
   if (!window.electronAPI?.documentSync) {
     throw new Error('Document sync API not available. Is the app fully loaded?');
@@ -495,7 +586,7 @@ export async function openCollabDocumentViaIPC(options: {
     throw new Error(result.error || 'Failed to resolve collaborative document config');
   }
 
-  const { orgId, documentId, title, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, serverUrl, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
+  const { orgId, documentId, title, orgKeyBase64, legacyOrgKeyBase64, legacyOrgKeysBase64, serverUrl, accountId, userId, userName, userEmail, pendingUpdateBase64 } = result.config;
   const documentType = options.documentType ?? result.config.documentType;
   const serverManaged = result.config.keyCustody === 'server-managed';
 
@@ -519,13 +610,20 @@ export async function openCollabDocumentViaIPC(options: {
     workspacePath: options.workspacePath,
     orgId,
     documentId,
-    title,
+    title: getSharedDocumentDisplayName(options.title || title, documentId),
+    displayPath: options.displayPath || (
+      options.title && options.title !== documentId ? options.title : undefined
+    ),
     documentType,
+    metadataVersion: options.metadataVersion,
+    fileExtension: options.fileExtension,
+    editorId: options.editorId,
     keyCustody: serverManaged ? 'server-managed' : 'legacy-e2e',
     documentKey,
     legacyDocumentKey: legacyDocumentKeys[0],
     legacyDocumentKeys,
     serverUrl,
+    accountId,
     userId,
     userName,
     userEmail,

@@ -10,6 +10,7 @@ import { DEFAULT_ONBOARDING_CONFIG } from '../../shared/types/workspace';
 import { AlphaFeatureTag, getDefaultAlphaFeatures, ALPHA_FEATURES } from '../../shared/alphaFeatures';
 import { DeveloperFeatureTag, getDefaultDeveloperFeatures, DEVELOPER_FEATURES } from '../../shared/developerFeatures';
 import { BetaFeatureTag, getDefaultBetaFeatures, enableAllBetaFeatures as enableAllBetaFeaturesUtil, BETA_FEATURES } from '../../shared/betaFeatures';
+import { deriveIssueKeyPrefix } from '../../shared/trackerIssueKeyPrefix';
 import { normalizeCodexProviderConfig, omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 
 // Theme can be a built-in theme or an extension theme ID (format: "extensionId:themeId")
@@ -466,13 +467,16 @@ export interface WorkspaceState {
   workstreamStates?: Record<string, unknown>;
   // Agent mode file scope mode (shared across all sessions in workspace)
   agentFileScopeMode?: AgentFileScopeMode;
-  // Collab mode tree state (expanded folders and local placeholder folders)
+  // Collab mode tree state.
   collabTree?: {
     expandedFolders: string[];
+    /** @deprecated Legacy local-only path folders. */
     customFolders: string[];
     // Folder path most recently used as the destination for "Share to Team".
-    // Pre-selected on next share so users don't re-pick the same folder.
+    // Retained for compatibility with clients predating first-class folders.
     lastSharedFolder?: string;
+    // Stable first-class folder id most recently used. Null means Team root.
+    lastSharedFolderId?: string | null;
   };
   collabPendingUpdates?: Record<string, {
     mergedUpdateBase64: string;
@@ -488,7 +492,7 @@ export interface WorkspaceState {
   issueKeyPrefix?: string;
   // Account identity bound to this workspace (personalOrgId).
   // Set once when the workspace is first synced. Different workspaces can use different accounts.
-  // Defaults to the primary account if not set.
+  // Defaults to the account selected for personal sync if not set.
   accountId?: string;
   // Hidden gutter buttons (navigation sidebar)
   hiddenGutterButtons?: string[];
@@ -670,6 +674,7 @@ function createDefaultWorkspaceState(workspacePath: string): WorkspaceState {
       customFolders: [],
     },
     collabPendingUpdates: {},
+    issueKeyPrefix: deriveIssueKeyPrefix(workspacePath),
     lastUpdated: Date.now(),
   };
 }
@@ -696,6 +701,13 @@ function normalizeWorkspaceState(raw: any, wsPath: string): WorkspaceState {
 
   // Deep merge raw data - this automatically preserves all fields
   deepMerge(state, raw);
+
+  // Preserve the historical NIM fallback for existing workspaces that never
+  // saved a prefix. Only newly-created workspace state gets the derived
+  // project-name default, so existing issue-key sequences do not change.
+  if (!Object.prototype.hasOwnProperty.call(raw, 'issueKeyPrefix')) {
+    state.issueKeyPrefix = undefined;
+  }
 
   // Ensure workspacePath is set correctly (in case raw had a different value)
   state.workspacePath = wsPath;
@@ -1585,6 +1597,11 @@ export interface SessionSyncConfig {
   // login order doesn't affect which index room sessions sync to.
   personalOrgId?: string;
   personalUserId?: string;
+  personalSyncProfiles?: Record<string, {
+    enabledProjects: string[];
+    docSyncEnabledProjects: string[];
+    preventSleepMode?: 'off' | 'always' | 'pluggedIn';
+  }>;
   // DEPRECATED: migrated to preventSleepMode
   preventSleepWhenSyncing?: boolean;
   // Prevent system sleep while sync is active (uses Electron powerSaveBlocker).

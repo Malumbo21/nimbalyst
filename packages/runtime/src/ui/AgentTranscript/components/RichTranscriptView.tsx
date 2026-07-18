@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { VList, type VListHandle, type CacheSnapshot } from 'virtua';
 import type { TranscriptViewMessage, SessionData } from '../../../ai/server/types';
@@ -613,6 +614,17 @@ export function stripMcpPrefix(toolName: string): string {
 export function isInteractiveWidgetTool(toolName: string | null | undefined): boolean {
   if (!toolName) return false;
   return INTERACTIVE_WIDGET_TOOLS.has(stripMcpPrefix(toolName));
+}
+
+/** Formats provider-supplied sub-agent execution metadata without normalizing it. */
+export function formatSubagentAuditLabel(
+  model: string | null | undefined,
+  reasoningEffort: string | null | undefined,
+): string | null {
+  const parts: string[] = [];
+  if (model) parts.push(`Model: ${model}`);
+  if (reasoningEffort) parts.push(`Reasoning effort: ${reasoningEffort}`);
+  return parts.length > 0 ? parts.join('; ') : null;
 }
 
 const isFileModifyingTool = (name?: string): boolean => {
@@ -1756,6 +1768,9 @@ export const RichTranscriptView = React.forwardRef<
     const toolArgs = tool.arguments as Record<string, any> | undefined;
     const description = (isSubAgent && toolArgs?.description ? toolArgs.description : null) as string | null;
     const prompt = (isSubAgent && toolArgs?.prompt ? toolArgs.prompt : null) as string | null;
+    const subagentAuditLabel = isSubAgent
+      ? formatSubagentAuditLabel(toolMsg.subagent?.model, toolMsg.subagent?.reasoningEffort)
+      : null;
 
     // Extract result text
     const resultText = tool.result ? extractResultText(tool.result) : null;
@@ -1799,6 +1814,15 @@ export const RichTranscriptView = React.forwardRef<
                 <span className="rich-transcript-tool-subagent-type text-[var(--nim-primary)] font-semibold"> [{toolMsg.subagent?.agentType}]</span>
               )}
             </span>
+            {subagentAuditLabel && (
+              <span
+                className="rich-transcript-subagent-audit min-w-0 max-w-40 truncate text-[11px] text-[var(--nim-text-muted)]"
+                aria-label={subagentAuditLabel}
+                title={subagentAuditLabel}
+              >
+                {toolMsg.subagent?.model}{toolMsg.subagent?.model && toolMsg.subagent?.reasoningEffort ? ' · ' : ''}{toolMsg.subagent?.reasoningEffort}
+              </span>
+            )}
             {!isSubAgent && tool.arguments && (() => {
               const argStr = formatToolArguments(tool.toolName, tool.arguments, workspacePath);
               if (!argStr) return null;
@@ -2287,6 +2311,7 @@ export const RichTranscriptView = React.forwardRef<
             onOpenSession={onOpenSession}
             onCompact={onCompact}
             provider={provider}
+            workspacePath={workspacePath}
           />
         </div>
 

@@ -3,7 +3,7 @@
  */
 
 import type { ToolDefinition } from '../tools';
-import type { EffortLevel } from './effortLevels';
+import type { EffortLevel, ThinkingMode } from './effortLevels';
 import type { ToolResult } from './protocols/ProtocolInterface';
 import { ModelIdentifier } from './ModelIdentifier';
 import {
@@ -218,12 +218,12 @@ export function shouldBlockStartedSessionProviderSwitch(
  * modelConstants.ts.
  *
  * `fable` is the Fable 5 tier above Opus — the CLI accepts it as a first-class
- * alias (`--model fable`, `/model fable`). The CLI gates the 1M window behind
- * the `fable[1m]` form just like opus/sonnet (plain `fable` is windowed at
- * 200k client-side; verified on CLI 2.1.175), so `fable` IS in
- * CLAUDE_CODE_VARIANTS_WITH_1M and gets a `fable-1m` picker row. Note it
- * requires usage credits on subscription plans (the CLI surfaces that itself
- * when unavailable).
+ * alias (`--model fable`, `/model fable`). On the current CLI plain `fable`
+ * already runs a 1M window at a flat price (the `[1m]` suffix is a no-op —
+ * GitHub #825), so it's a single row with no `-1m` duplicate (see
+ * `CLAUDE_CODE_NATIVE_1M_VARIANTS`). The earlier 200k client-side windowing was
+ * real on CLI 2.1.175 but is now stale. Note it requires usage credits on
+ * subscription plans (the CLI surfaces that itself when unavailable).
  */
 export const CLAUDE_CODE_VARIANTS = ['fable', 'opus', 'opus-4-7', 'opus-4-6', 'sonnet', 'sonnet-4-6', 'haiku'] as const;
 
@@ -404,6 +404,7 @@ export interface ProviderConfig {
   baseUrl?: string;
   allowedTools?: string[];  // List of allowed tool names, ['*'] for all tools
   effortLevel?: EffortLevel;  // Effort level for Opus 4.6 adaptive reasoning (low/medium/high/max)
+  thinkingMode?: ThinkingMode;  // Extended thinking mode for Claude Agent (enabled/disabled)
   responseFormat?: ProviderResponseFormat;  // Response format constraint (extension chat completions)
   skipLogging?: boolean;  // Skip message logging to DB (extension stateless completions)
 }

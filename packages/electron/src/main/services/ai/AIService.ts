@@ -29,7 +29,7 @@ import { isModelEnabled } from './modelEnablementFilter';
 import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { parseContextUsageMessage } from '@nimbalyst/runtime/ai/server/utils/contextUsage';
 import { isBedrockToolSearchError } from '@nimbalyst/runtime/ai/server/utils/errorDetection';
-import { resolveEffortLevel } from '@nimbalyst/runtime/ai/server/effortLevels';
+import { parseThinkingMode, resolveEffortLevel } from '@nimbalyst/runtime/ai/server/effortLevels';
 import type { SessionStore } from '@nimbalyst/runtime';
 import {
   ModelIdentifier,
@@ -88,8 +88,10 @@ import { mergeAISettings, getAIProviderOverridesWithWorktreeFallback } from '../
 import { DocumentContextService, type RawDocumentContext, type PreparedDocumentContext } from '@nimbalyst/runtime';
 import { getMessageSyncHandler, getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
 import { applyRemoteReadReceipt } from '../../ipc/ReadReceiptHandlers';
+import { applyRemoteTrackerPersonalState } from '../../ipc/TrackerPersonalStateHandlers';
 import { normalizeCodexProviderConfig, omitModelsField, stripTransientProviderFields } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
 import { isFileInWorkspaceOrWorktree, resolveProjectPath } from '../../utils/workspaceDetection';
+import { inferWorktreePathFromFilePath, inferWorktreePathFromCommand } from './worktreeInference';
 import { SessionFilesRepository } from '@nimbalyst/runtime';
 import { buildToolPermissionResponseRecord } from './claudeCliToolPermission';
 import * as fs from 'fs';
@@ -489,7 +491,7 @@ export class AIService {
                 testStatus: "idle",
               },
               'openai-codex': {
-                enabled: false,
+                enabled: true,
                 testStatus: "idle",
                 installStatus: "not-installed",
               },
@@ -591,6 +593,7 @@ export class AIService {
       temperature: (session.providerConfig as any)?.temperature,
       ...(apiKey ? { apiKey } : {}),
       ...(effortLevel && { effortLevel }),
+      thinkingMode: parseThinkingMode((session.metadata as any)?.thinkingMode),
     };
 
     const fullModel = session.model || session.providerConfig?.model;
@@ -1050,6 +1053,12 @@ export class AIService {
       if (syncProvider.onReadReceipt) {
         syncProvider.onReadReceipt((receipt) => {
           void applyRemoteReadReceipt(receipt);
+        });
+      }
+
+      if (syncProvider.onTrackerPersonalState) {
+        syncProvider.onTrackerPersonalState((change) => {
+          void applyRemoteTrackerPersonalState(change);
         });
       }
 
@@ -1963,6 +1972,7 @@ export class AIService {
         if (effortLevel) {
           initConfig.effortLevel = effortLevel;
         }
+        initConfig.thinkingMode = parseThinkingMode((session.metadata as any)?.thinkingMode);
       }
 
       // Pass effort level for OpenAI Codex
@@ -2833,10 +2843,10 @@ export class AIService {
         try {
           const { getQueuedPromptsStore } = await import('../RepositoryManager');
           const queueStore = getQueuedPromptsStore();
-          const { completed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
-          if (completed > 0 || rolledBack > 0) {
+          const { completed, failed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
+          if (completed > 0 || failed > 0 || rolledBack > 0) {
             logger.main.info(
-              `[AIService] cancelRequest: swept session ${sessionId} -- ${completed} delivered marked completed, ${rolledBack} undelivered rolled back`
+              `[AIService] cancelRequest: swept session ${sessionId} -- ${completed} answered marked completed, ${failed} delivered-but-unanswered marked failed, ${rolledBack} undelivered rolled back`
             );
           }
         } catch (sweepErr) {
@@ -2895,10 +2905,10 @@ export class AIService {
       try {
         const { getQueuedPromptsStore } = await import('../RepositoryManager');
         const queueStore = getQueuedPromptsStore();
-        const { completed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
-        if (completed > 0 || rolledBack > 0) {
+        const { completed, failed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
+        if (completed > 0 || failed > 0 || rolledBack > 0) {
           logger.main.info(
-            `[AIService] interruptCurrentTurn: swept session ${sessionId} -- ${completed} delivered marked completed, ${rolledBack} undelivered rolled back`
+            `[AIService] interruptCurrentTurn: swept session ${sessionId} -- ${completed} answered marked completed, ${failed} delivered-but-unanswered marked failed, ${rolledBack} undelivered rolled back`
           );
         }
       } catch (sweepErr) {
@@ -4029,36 +4039,11 @@ export class AIService {
   }
 
   private inferWorktreePathFromFilePath(workspacePath: string, filePath: string): string | null {
-    if (!workspacePath || !filePath) return null;
-    const normalizedWorkspace = path.normalize(workspacePath);
-    const normalizedFile = path.normalize(filePath);
-    const worktreePrefix = `${normalizedWorkspace}_worktrees${path.sep}`;
-    if (!normalizedFile.startsWith(worktreePrefix)) return null;
-
-    const remainder = normalizedFile.slice(worktreePrefix.length);
-    const worktreeName = remainder.split(path.sep)[0];
-    if (!worktreeName || worktreeName.includes('..')) return null;
-
-    const worktreePath = path.resolve(path.join(`${normalizedWorkspace}_worktrees`, worktreeName));
-    if (!worktreePath.startsWith(worktreePrefix.slice(0, -1))) return null;
-    return worktreePath;
+    return inferWorktreePathFromFilePath(workspacePath, filePath);
   }
 
   private inferWorktreePathFromCommand(command: string | undefined, workspacePath: string): string | null {
-    if (!command || !workspacePath) return null;
-    const normalizedWorkspace = path.normalize(workspacePath);
-    const worktreePrefix = `${normalizedWorkspace}_worktrees${path.sep}`;
-    const normalizedCommand = command.replace(/\\/g, path.sep);
-    const idx = normalizedCommand.indexOf(worktreePrefix);
-    if (idx === -1) return null;
-
-    const after = normalizedCommand.slice(idx + worktreePrefix.length);
-    const worktreeName = after.split(/[\s'"\r\n\\/]/)[0];
-    if (!worktreeName || worktreeName.includes('..')) return null;
-
-    const result = path.resolve(path.join(`${normalizedWorkspace}_worktrees`, worktreeName));
-    if (!result.startsWith(worktreePrefix.slice(0, -1))) return null;
-    return result;
+    return inferWorktreePathFromCommand(command, workspacePath);
   }
 
   /**

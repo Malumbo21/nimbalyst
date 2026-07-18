@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
+import { activeWorkspacePathAtom } from '../../../store/atoms/openProjects';
 import { ProviderConfig, Model } from '../../Settings/SettingsView';
 import {ClaudeForWindowsInstallation} from "../../../../main/services/CLIManager.ts";
 import {usePostHog} from "posthog-js/react";
@@ -125,6 +126,10 @@ export function ClaudeCodePanel({
   scope = 'user',
   workspacePath,
 }: ClaudeCodePanelProps) {
+  // Prefer the project override path; otherwise fall back to the workspace
+  // currently focused in this window so the login terminal opens in the project.
+  const activeWorkspacePath = useAtomValue(activeWorkspacePathAtom);
+  const loginCwd = workspacePath ?? activeWorkspacePath ?? undefined;
   const [loginStatus, setLoginStatus] = useState<{
     isLoggedIn: boolean;
     hasOAuthToken: boolean;
@@ -377,7 +382,7 @@ export function ClaudeCodePanel({
   const handleLogin = async () => {
     setIsLoggingIn(true);
     try {
-      const result = await window.electronAPI.invoke('claude-code:login');
+      const result = await window.electronAPI.invoke('claude-code:login', loginCwd);
       if (result.success) {
         alert(result.message || 'Login initiated! Please complete authentication in the Terminal window (you may have to type /login to complete the process), then click "Refresh Status" to verify.');
       }

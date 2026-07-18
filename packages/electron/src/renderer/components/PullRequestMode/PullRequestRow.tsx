@@ -6,6 +6,7 @@
  * re-render every row (re-render isolation rule).
  */
 
+import type { JSX } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 import type { PullRequestRow as PullRequestRowData } from '../../services/RendererPullRequestService';

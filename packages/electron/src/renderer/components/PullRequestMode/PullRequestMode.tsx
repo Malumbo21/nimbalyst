@@ -6,6 +6,7 @@
  * cadence, and renders the sidebar + list + detail.
  */
 
+import type { JSX } from 'react';
 import { useCallback, useEffect } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';

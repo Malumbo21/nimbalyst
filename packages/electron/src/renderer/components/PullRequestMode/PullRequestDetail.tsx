@@ -9,6 +9,7 @@
  * `refreshToken`, in addition to the list-level poll scheduler.
  */
 
+import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime';

@@ -57,7 +57,7 @@ import {
   workstreamLayoutModeAtom,
   workstreamSplitRatioAtom,
   workstreamFilesSidebarVisibleAtom,
-  workstreamHasOpenFilesAtom,
+  workstreamHasOpenResourcesAtom,
   setWorkstreamLayoutModeAtom,
   setWorkstreamSplitRatioAtom,
   toggleWorkstreamFilesSidebarAtom,
@@ -92,6 +92,7 @@ export interface AgentWorkstreamPanelProps {
   workspacePath: string;
   workstreamId: string;
   workstreamType: WorkstreamType;
+  isActive: boolean;
   onFileOpen?: (filePath: string) => Promise<void>;
   onAddSessionToWorktree?: (worktreeId: string) => Promise<void>;
   onCreateWorktreeSession?: (worktreeId: string) => Promise<string | null>;
@@ -411,7 +412,7 @@ const WorkstreamHeader: React.FC<{
   const isProcessing = useAtomValue(workstreamProcessingAtom(workstreamId));
   const sessionData = useAtomValue(sessionStoreAtom(workstreamId));
   const layoutMode = useAtomValue(workstreamLayoutModeAtom(workstreamId));
-  const hasTabs = useAtomValue(workstreamHasOpenFilesAtom(workstreamId));
+  const hasTabs = useAtomValue(workstreamHasOpenResourcesAtom(workstreamId));
   const sessions = useAtomValue(workstreamSessionsAtom(workstreamId));
   const [isArchived, setIsArchived] = useAtom(sessionArchivedAtom(workstreamId));
   const setLayoutMode = useSetAtom(setWorkstreamLayoutModeAtom);
@@ -670,6 +671,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
   workspacePath,
   workstreamId,
   workstreamType,
+  isActive,
   onFileOpen,
   onAddSessionToWorktree,
   onCreateWorktreeSession,
@@ -701,7 +703,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
   const layoutMode = useAtomValue(workstreamLayoutModeAtom(workstreamId));
   const sidebarVisible = useAtomValue(workstreamFilesSidebarVisibleAtom(workstreamId));
   const splitRatio = useAtomValue(workstreamSplitRatioAtom(workstreamId));
-  const hasTabs = useAtomValue(workstreamHasOpenFilesAtom(workstreamId));
+  const hasTabs = useAtomValue(workstreamHasOpenResourcesAtom(workstreamId));
   const toggleSidebar = useSetAtom(toggleWorkstreamFilesSidebarAtom);
   const setSplitRatio = useSetAtom(setWorkstreamSplitRatioAtom);
   const setLayoutMode = useSetAtom(setWorkstreamLayoutModeAtom);
@@ -1302,7 +1304,7 @@ export const AgentWorkstreamPanel = React.memo(React.forwardRef<AgentWorkstreamP
                 workstreamId={workstreamId}
                 workspacePath={workspacePath}
                 basePath={worktreePath || workspacePath}
-                isActive={true}
+                isActive={isActive}
                 onSwitchToAgentMode={onSwitchToAgentMode}
                 onOpenSessionInChat={onOpenSessionInChat}
                 onTabDoubleClick={toggleEditorMaximized}
