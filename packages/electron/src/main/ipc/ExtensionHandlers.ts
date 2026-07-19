@@ -901,6 +901,7 @@ export function registerExtensionHandlers(): void {
   // Write binary content to a file (base64 encoded)
   safeHandle('extensions:write-binary', async (_event, filePath: string, base64Content: string) => {
     try {
+      SessionFileWatcher.markEditorSave(filePath);
       const dir = path.dirname(filePath);
       await fs.mkdir(dir, { recursive: true });
       const buffer = Buffer.from(base64Content, 'base64');

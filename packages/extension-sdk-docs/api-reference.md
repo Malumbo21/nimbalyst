@@ -111,7 +111,8 @@ interface ExtensionServices {
 ```ts
 interface ExtensionFileSystemService {
   readFile(path: string): Promise<string>;
-  writeFile(path: string, content: string): Promise<void>;
+  /** Writes UTF-8 text or byte-exact binary content. */
+  writeFile(path: string, content: string | Uint8Array): Promise<void>;
   fileExists(path: string): Promise<boolean>;
   findFiles(pattern: string): Promise<string[]>;
 }

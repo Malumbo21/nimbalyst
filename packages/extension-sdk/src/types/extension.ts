@@ -1065,8 +1065,8 @@ export interface ExtensionFileSystemService {
   /** Read a file's contents */
   readFile(path: string): Promise<string>;
 
-  /** Write content to a file */
-  writeFile(path: string, content: string): Promise<void>;
+  /** Write text or binary content to a file. Binary bytes are preserved exactly. */
+  writeFile(path: string, content: string | Uint8Array): Promise<void>;
 
   /** Check if a file exists */
   fileExists(path: string): Promise<boolean>;
