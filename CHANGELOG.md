@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- CLI: repeating `--field key=value` for the same key now collects the values into an array, so multi-value fields can be written from `nim tracker create`/`update` (previously only the last value was kept).
 - OpenCode no longer stays disabled for the rest of the session when its server is slow to start; a slow start now retries or adopts the ready server, and a missing OpenCode CLI reports a clear error.
 - PR review diffs and controls now follow the active theme without unreadable backgrounds behind operator characters.
 - Extensions can now write binary files without corrupting their contents.
