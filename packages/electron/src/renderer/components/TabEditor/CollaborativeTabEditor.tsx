@@ -810,6 +810,12 @@ export const CollaborativeTabEditor: React.FC<CollaborativeTabEditorProps> = ({
       throw new Error('[CollaborativeTabEditor] CollabLexicalProvider not initialized');
     }
 
+    // A new CollaborationPlugin binding is mounting on this (possibly reused)
+    // provider. Give it a fresh empty editorDoc so connect()'s replay paints --
+    // binding onto a previously-claimed, already-populated editorDoc renders
+    // blank (NIM-1826).
+    provider.prepareForBinding();
+
     // Register our Y.Doc in the yjsDocMap so CollaborationPlugin can find it
     const ydoc = provider.getYDoc();
     yjsDocMap.set(id, ydoc);
