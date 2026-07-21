@@ -23,6 +23,7 @@ import { HelpTooltip } from '../../help';
 import { isDirectChatProvider, isProviderVisible } from '../../utils/chatProviderVisibility';
 
 const ALPHA_PROVIDERS = new Set(['opencode', 'copilot-cli']);
+const TYPEAHEAD_RESET_MS = 700;
 
 interface Model {
   id: string;
@@ -76,6 +77,8 @@ export function ModelSelector({
   const navigateToSettings = useSetAtom(navigateToSettingsAtom);
   const menuRef = React.useRef<HTMLDivElement>(null);
   const lastOpenRequestRef = React.useRef(openRequest);
+  const typeaheadQueryRef = React.useRef('');
+  const typeaheadResetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const { refs, floatingStyles, context } = useFloating({
     open: isOpen,
     onOpenChange: setIsOpen,
@@ -134,7 +137,22 @@ export function ModelSelector({
     }
   };
 
+  const resetTypeahead = React.useCallback(() => {
+    typeaheadQueryRef.current = '';
+    if (typeaheadResetTimerRef.current) {
+      clearTimeout(typeaheadResetTimerRef.current);
+      typeaheadResetTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => resetTypeahead, [resetTypeahead]);
+
+  useEffect(() => {
+    if (!isOpen) resetTypeahead();
+  }, [isOpen, resetTypeahead]);
+
   const handleModelSelect = (modelId: string) => {
+    resetTypeahead();
     onModelChange(modelId);
     setIsOpen(false);
   };
@@ -169,6 +187,7 @@ export function ModelSelector({
 
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
+      resetTypeahead();
       const direction = event.key === 'ArrowDown' ? 1 : -1;
       const nextIndex = Math.max(0, Math.min(options.length - 1, currentIndex + direction));
       options[nextIndex]?.focus();
@@ -184,11 +203,50 @@ export function ModelSelector({
   };
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape') return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      resetTypeahead();
+      setIsOpen(false);
+      onKeyboardDismiss?.();
+      return;
+    }
+
+    if (
+      event.key.length !== 1
+      || event.key.trim() === ''
+      || event.metaKey
+      || event.ctrlKey
+      || event.altKey
+      || event.nativeEvent.isComposing
+    ) return;
+
     event.preventDefault();
-    event.stopPropagation();
-    setIsOpen(false);
-    onKeyboardDismiss?.();
+    typeaheadQueryRef.current += event.key.toLowerCase();
+
+    if (typeaheadResetTimerRef.current) clearTimeout(typeaheadResetTimerRef.current);
+    typeaheadResetTimerRef.current = setTimeout(resetTypeahead, TYPEAHEAD_RESET_MS);
+
+    const query = typeaheadQueryRef.current;
+    const matches = getEnabledModelOptions()
+      .map(option => {
+        const name = option.dataset.modelName?.toLowerCase() ?? '';
+        const id = option.dataset.modelId?.toLowerCase() ?? '';
+        const searchable = `${name} ${id}`;
+        const tokens = searchable.split(/[^a-z0-9]+/).filter(Boolean);
+        const score = name.startsWith(query)
+          ? 0
+          : tokens.some(token => token.startsWith(query))
+            ? 1
+            : searchable.includes(query)
+              ? 2
+              : -1;
+        return { option, score };
+      })
+      .filter(match => match.score >= 0)
+      .sort((a, b) => a.score - b.score);
+
+    matches[0]?.option.focus();
   };
 
   const getSettingsCategoryForModel = (modelId: string): SettingsCategory => {
@@ -408,6 +466,7 @@ export function ModelSelector({
                             title={isDisabled ? disabledTooltip : undefined}
                             aria-disabled={isDisabled}
                             data-model-id={model.id}
+                            data-model-name={model.name}
                           >
                             <span className={`model-selector-option-name flex-1 overflow-hidden text-ellipsis whitespace-nowrap ${isDisabled ? 'text-[var(--nim-text-faint)]' : ''}`}>{model.name}</span>
                             {isDisabled ? (
@@ -454,6 +513,7 @@ export function ModelSelector({
                             title={isDisabled ? disabledTooltip : undefined}
                             aria-disabled={isDisabled}
                             data-model-id={model.id}
+                            data-model-name={model.name}
                           >
                             <span className={`model-selector-option-name flex-1 overflow-hidden text-ellipsis whitespace-nowrap ${isDisabled ? 'text-[var(--nim-text-faint)]' : ''}`}>{model.name}</span>
                             {isDisabled ? (

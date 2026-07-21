@@ -158,6 +158,68 @@ describe('AI model picker keyboard controls', () => {
     });
     aiInput.remove();
   });
+
+  it('focuses models by typing ahead against names and model IDs', async () => {
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        aiGetModels: vi.fn().mockResolvedValue({
+          success: true,
+          grouped: {
+            agents: [
+              { id: 'agents:fable', name: 'Fable', provider: 'agents' },
+              { id: 'agents:gpt-5.6-sol', name: 'GPT-5.6', provider: 'agents' },
+              { id: 'agents:haiku', name: 'Haiku', provider: 'agents' },
+            ],
+          },
+        }),
+      },
+    });
+    const onModelChange = vi.fn();
+    const view = renderModelSelector(
+      <ModelSelector currentModel="agents:haiku" onModelChange={onModelChange} openRequest={0} />,
+    );
+
+    view.rerender(
+      <ModelSelector currentModel="agents:haiku" onModelChange={onModelChange} openRequest={1} />,
+    );
+
+    const haiku = await screen.findByRole('button', { name: 'Haiku' });
+    const fable = screen.getByRole('button', { name: 'Fable' });
+    await waitFor(() => expect(document.activeElement).toBe(haiku));
+
+    fireEvent.keyDown(haiku, { key: 'f' });
+    fireEvent.keyDown(fable, { key: 'a' });
+    fireEvent.keyDown(fable, { key: 'b' });
+    expect(document.activeElement).toBe(fable);
+
+    fireEvent.keyDown(fable, { key: 'Enter' });
+    expect(onModelChange).toHaveBeenCalledWith('agents:fable');
+
+    view.rerender(
+      <ModelSelector currentModel="agents:fable" onModelChange={onModelChange} openRequest={2} />,
+    );
+
+    const reopenedFable = await screen.findByRole('button', { name: 'Fable' });
+    const sol = screen.getByRole('button', { name: 'GPT-5.6' });
+    await waitFor(() => expect(document.activeElement).toBe(reopenedFable));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.keyDown(reopenedFable, { key: 'x' });
+      act(() => vi.advanceTimersByTime(701));
+
+      fireEvent.keyDown(reopenedFable, { key: 's' });
+      fireEvent.keyDown(sol, { key: 'o' });
+      fireEvent.keyDown(sol, { key: 'l' });
+      expect(document.activeElement).toBe(sol);
+
+      fireEvent.keyDown(sol, { key: 'Enter' });
+      expect(onModelChange).toHaveBeenCalledWith('agents:gpt-5.6-sol');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('AI model picker provider visibility', () => {
