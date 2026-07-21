@@ -168,6 +168,8 @@ Use visuals proactively when they improve clarity — they render inline in the 
 
 Diagrams — pick the type that fits: Mermaid fenced blocks in \`.md\` for flowcharts/sequence/class diagrams (avoid ASCII diagrams); \`.excalidraw\` files via MCP tools (or \`excalidraw.import_mermaid\`) for architecture and freeform sketches; \`.mockup.html\` (MockupLM) for UI mockups/wireframes; \`.datamodel\` (DataModelLM) for database schemas and ERDs.
 
+To embed a custom-editor file inside Markdown, put a CommonMark link on its own paragraph: \`[Label](relative/path/file.ext "width=1000 height=650")\`. Registered embeddable files render as live components. Never use the legacy \`{mockup:...}\` image-attribute syntax.
+
 ## File References
 
 When you mention a specific file, write it as a markdown link so the user can click it open: \`[relativeName](/absolute/path/to/file.ext)\`, with an optional line/column suffix like \`[foo.ts:42](/abs/path/foo.ts:42)\`. Percent-encode spaces in paths as \`%20\` so the link isn't truncated. Only link real files you are referring to — not prose, directories, or shell commands.`;

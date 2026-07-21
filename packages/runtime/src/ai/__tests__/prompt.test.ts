@@ -92,6 +92,14 @@ describe('buildClaudeCodeSystemPrompt', () => {
     expect(prompt).toContain('never invent an issue key');
   });
 
+  it('documents only the current custom-editor embed contract', () => {
+    const prompt = buildClaudeCodeSystemPrompt({});
+
+    expect(prompt).toContain('[Label](relative/path/file.ext "width=1000 height=650")');
+    expect(prompt).toContain('Never use the legacy `{mockup:...}` image-attribute syntax');
+    expect(prompt).not.toContain('](screenshot.png){mockup:');
+  });
+
   // Context-size regression gate (NIM-1988): the addendum is injected into every
   // claude-code session, so its size is a per-session token cost. If this fails,
   // trim prose rather than raising the budget.
