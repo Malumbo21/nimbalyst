@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Pending permission review buttons now scroll to the correct approval prompt instead of doing nothing.
 - RTL text typed in the chat composer now displays on the right again; the detected direction is mirrored onto the composer's visible-text overlay, which a transparent-textarea refactor had left stuck on LTR.
 - Pinned Shared Documents tabs now keep their pinned state and tab order after a window reload or app restart.
 - Answering a question prompt in a Codex (GPT) session now reliably resumes the turn, on desktop and from the mobile app, instead of appearing to submit but hanging.

@@ -2100,7 +2100,7 @@ export const RichTranscriptView = React.forwardRef<
     if (isTool && message.toolCall) {
       const isInteractiveWidget = isInteractiveWidgetTool(message.toolCall.toolName);
       if (!settings.showToolCalls && !isInteractiveWidget) {
-        return null;
+        return <div key={messageKey} style={{ display: 'none' }} />;
       }
       return (
         <div key={messageKey} className="rich-transcript-tool-container orphan ml-6 mb-2">
@@ -2163,7 +2163,7 @@ export const RichTranscriptView = React.forwardRef<
       // Other deny sources (`rule`, `mode`, `asyncAgent`, headless auto-deny)
       // stay visible because no re-prompt happens for those paths.
       if (message.systemMessage.deniedReasonType === 'classifier') {
-        return null;
+        return <div key={messageKey} style={{ display: 'none' }} />;
       }
       return (
         <div
