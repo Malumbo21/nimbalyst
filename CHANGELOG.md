@@ -10,13 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- Extensions can contribute first-class Application or Project settings pages, with project context for per-repository surfaces.
+- Extensions can contribute first-class Application or Project settings pages with per-repository context, and Memory now has its own Project settings page.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Updated the bundled Claude Agent engine to Claude Code 2.1.215; subagents no longer spawn their own nested subagents by default, and the number running at once is now capped.
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Interrupting a Claude Agent session no longer lets a permission-gated tool run anyway after the interrupt.
 
 ### Removed
 <!-- Removed features go here -->
