@@ -166,6 +166,16 @@ export function getMigrations(schemaDir: string): Migration[] {
       name: 'account_org_bindings',
       sqlFile: path.join(schemaDir, '0025_account_org_bindings.sql'),
     },
+    {
+      version: 26,
+      name: 'tool_usage_counters',
+      sqlFile: path.join(schemaDir, '0026_tool_usage_counters.sql'),
+    },
+    {
+      version: 27,
+      name: 'tool_usage_backfill_state',
+      sqlFile: path.join(schemaDir, '0027_tool_usage_backfill_state.sql'),
+    },
   ];
 }
 

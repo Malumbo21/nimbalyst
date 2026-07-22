@@ -7,6 +7,7 @@
 
 import type { TipDefinition } from '../types';
 import { actionPromptsTip } from './action-prompts';
+import { agentDiagramTip } from './agent-diagram';
 import { autoCommitTip } from './auto-commit';
 import { claudeMdTip } from './claude-md';
 import { contentSearchTip } from './content-search';
@@ -43,6 +44,7 @@ export const tips: TipDefinition[] = [
   themeExploreTip,
   // Editor discovery
   excalidrawDiscoverTip,
+  agentDiagramTip,
   mockupDiscoverTip,
   datamodelDiscoverTip,
   spreadsheetDiscoverTip,

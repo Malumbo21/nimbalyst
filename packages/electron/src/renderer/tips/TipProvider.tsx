@@ -72,6 +72,7 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
   const activeTipIdRef = useRef(activeTipId);
   const currentModeRef = useRef(currentMode);
   const featureUsageRef = useRef<Record<string, FeatureUsageRecord>>({});
+  const toolUsageRef = useRef<Record<string, FeatureUsageRecord>>({});
   const isGitRepoRef = useRef(false);
   const isWorktreesAvailableRef = useRef(isWorktreesAvailable);
   const workspacePathRef = useRef(workspacePath);
@@ -97,6 +98,16 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
       } catch {
         if (!cancelled) {
           featureUsageRef.current = {};
+        }
+      }
+      try {
+        const toolUsage = await window.electronAPI.toolUsage?.getRollup();
+        if (!cancelled) {
+          toolUsageRef.current = toolUsage ?? {};
+        }
+      } catch {
+        if (!cancelled) {
+          toolUsageRef.current = {};
         }
       }
     };
@@ -139,6 +150,7 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
 
   const buildTriggerContext = useCallback((): TipTriggerContext => {
     const featureUsage = featureUsageRef.current;
+    const toolUsage = toolUsageRef.current;
 
     return {
       currentMode: currentModeRef.current,
@@ -149,6 +161,9 @@ export function TipProvider({ children, currentMode, workspacePath }: TipProvide
       hasBeenUsed: (feature: string) => (featureUsage[feature]?.count ?? 0) > 0,
       hasReachedCount: (feature: string, threshold: number) =>
         (featureUsage[feature]?.count ?? 0) >= threshold,
+      toolUsage,
+      hasUsedTool: (toolKey: string) => (toolUsage[toolKey]?.count ?? 0) > 0,
+      toolUseCount: (toolKey: string) => toolUsage[toolKey]?.count ?? 0,
     };
   }, []);
 

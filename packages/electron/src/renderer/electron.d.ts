@@ -599,6 +599,19 @@ interface ElectronAPI {
     getAll: () => Promise<Record<string, { count: number; firstUsed: string; lastUsed: string }>>;
   };
 
+  // Per-tool usage (tip targeting rollup + AI Usage Report Tools tab)
+  toolUsage: {
+    getRollup: () => Promise<Record<string, { count: number; firstUsed: string; lastUsed: string }>>;
+    getReport: (workspaceId?: string) => Promise<{
+      topTools: Array<{ toolName: string; mcpServer: string | null; count: number; errorCount: number }>;
+      byKind: { builtin: number; mcp: number };
+      byProvider: Array<{ provider: string; count: number }>;
+      overTime: Array<{ day: string; count: number }>;
+      byProject: Array<{ projectPath: string; count: number }>;
+    }>;
+    backfill: () => Promise<{ sessionsProcessed: number; toolCallsCounted: number }>;
+  };
+
   // Credentials (for E2E encryption key management)
   credentials: {
     get: () => Promise<{ encryptionKeySeed: string; createdAt: number; isSecure: boolean }>;

@@ -29,6 +29,7 @@ export function FilesEmptyTipDisplay({
   const setWalkthroughState = useSetAtom(walkthroughStateAtom);
   const isWorktreesAvailable = useAtomValue(worktreesFeatureAvailableAtom);
   const [featureUsage, setFeatureUsage] = useState<Record<string, FeatureUsageRecord>>({});
+  const [toolUsage, setToolUsage] = useState<Record<string, FeatureUsageRecord>>({});
   const [isGitRepo, setIsGitRepo] = useState(false);
   const [activeTipId, setActiveTipId] = useState<string | null>(null);
   const [showAllTipsDialog, setShowAllTipsDialog] = useState(false);
@@ -36,6 +37,16 @@ export function FilesEmptyTipDisplay({
 
   useEffect(() => {
     let cancelled = false;
+
+    // toolUsage may be absent if the preload bundle predates this API (dev
+    // renderer hot-reload without a full restart) -- guard rather than crash.
+    void Promise.resolve(window.electronAPI.toolUsage?.getRollup())
+      .then((usage) => {
+        if (!cancelled) setToolUsage(usage ?? {});
+      })
+      .catch(() => {
+        if (!cancelled) setToolUsage({});
+      });
 
     window.electronAPI.featureUsage.getAll()
       .then((usage) => {
@@ -67,7 +78,10 @@ export function FilesEmptyTipDisplay({
     hasBeenUsed: (feature) => (featureUsage[feature]?.count ?? 0) > 0,
     hasReachedCount: (feature, threshold) =>
       (featureUsage[feature]?.count ?? 0) >= threshold,
-  }), [featureUsage, isGitRepo, isWorktreesAvailable, workspacePath]);
+    toolUsage,
+    hasUsedTool: (toolKey) => (toolUsage[toolKey]?.count ?? 0) > 0,
+    toolUseCount: (toolKey) => toolUsage[toolKey]?.count ?? 0,
+  }), [featureUsage, toolUsage, isGitRepo, isWorktreesAvailable, workspacePath]);
 
   const eligibleTips = useMemo(() => {
     if (!walkthroughState) return [];

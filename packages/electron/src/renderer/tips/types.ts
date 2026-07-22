@@ -21,6 +21,15 @@ export interface TipTriggerContext {
   featureUsage: Record<string, FeatureUsageRecord>;
   hasBeenUsed: (feature: string) => boolean;
   hasReachedCount: (feature: string, threshold: number) => boolean;
+  /**
+   * Rolled-up per-tool usage. Keys are built-in tool names (`Bash`, `Read`) or
+   * `mcp:<server>` for MCP/extension tools (e.g. `mcp:nimbalyst-excalidraw`).
+   */
+  toolUsage: Record<string, FeatureUsageRecord>;
+  /** True when the given rolled-up tool key has been used at least once. */
+  hasUsedTool: (toolKey: string) => boolean;
+  /** Lifetime use count for a rolled-up tool key. */
+  toolUseCount: (toolKey: string) => number;
 }
 
 /**

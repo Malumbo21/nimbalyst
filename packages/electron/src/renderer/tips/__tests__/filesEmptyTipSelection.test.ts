@@ -21,6 +21,9 @@ const context: TipTriggerContext = {
   featureUsage: {},
   hasBeenUsed: () => false,
   hasReachedCount: () => false,
+  toolUsage: {},
+  hasUsedTool: () => false,
+  toolUseCount: () => 0,
 };
 
 function createTip(

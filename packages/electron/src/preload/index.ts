@@ -1489,6 +1489,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAll: () => ipcRenderer.invoke('feature-usage:get-all'),
   },
 
+  // Per-tool usage (tip targeting rollup + AI Usage Report Tools tab)
+  toolUsage: {
+    getRollup: () => ipcRenderer.invoke('tool-usage:get-rollup'),
+    getReport: (workspaceId?: string) => ipcRenderer.invoke('tool-usage:get-report', workspaceId),
+    backfill: () => ipcRenderer.invoke('tool-usage:backfill'),
+  },
+
   // Credentials (for sync and mobile pairing)
   credentials: {
     get: () => ipcRenderer.invoke('credentials:get'),

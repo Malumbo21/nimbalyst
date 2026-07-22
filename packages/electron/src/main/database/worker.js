@@ -2957,6 +2957,55 @@ class PGLiteWorker {
       console.error('[PGLite Worker] Failed to create collab document replica tables:', error);
       throw error;
     }
+
+    // Migration: per-tool usage counters (schema version 26).
+    // Mirror of SQLite 0026_tool_usage_counters.sql.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tool_usage_counters (
+          tool_name    TEXT NOT NULL,
+          mcp_server   TEXT,
+          mcp_tool     TEXT,
+          provider     TEXT NOT NULL DEFAULT '',
+          project_path TEXT NOT NULL DEFAULT '',
+          day          TEXT NOT NULL,
+          count        INTEGER NOT NULL DEFAULT 0,
+          error_count  INTEGER NOT NULL DEFAULT 0,
+          first_used   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          last_used    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (tool_name, provider, project_path, day)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_usage_day ON tool_usage_counters (day);
+        CREATE INDEX IF NOT EXISTS idx_tool_usage_server ON tool_usage_counters (mcp_server);
+      `);
+      console.log('[PGLite Worker] tool_usage_counters table created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create tool_usage_counters table:', error);
+      throw error;
+    }
+
+    // Migration: retry-safe historical tool-usage backfill state (schema version 27).
+    // Mirror of SQLite 0027_tool_usage_backfill_state.sql.
+    try {
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS tool_usage_backfill_meta (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          cutoff_at TIMESTAMPTZ NOT NULL
+        );
+        INSERT INTO tool_usage_backfill_meta (singleton, cutoff_at)
+        VALUES (1, NOW())
+        ON CONFLICT (singleton) DO NOTHING;
+
+        CREATE TABLE IF NOT EXISTS tool_usage_backfill_sessions (
+          session_id TEXT PRIMARY KEY,
+          backfilled_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      console.log('[PGLite Worker] tool usage backfill state created successfully');
+    } catch (error) {
+      console.error('[PGLite Worker] Failed to create tool usage backfill state:', error);
+      throw error;
+    }
   }
 
   async query(message) {

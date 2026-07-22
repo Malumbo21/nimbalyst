@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 <!-- New features go here -->
 - Extensions can contribute first-class Application or Project settings pages with per-repository context, and Memory now has its own Project settings page.
+- The AI Usage Report now shows built-in and extension tool usage over time and by project, with historical backfill and contextual tips for undiscovered tools.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

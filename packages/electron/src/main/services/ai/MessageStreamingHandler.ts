@@ -73,6 +73,7 @@ import { sessionFileTracker } from '../SessionFileTracker';
 import { codexEditWindowRegistry, shouldOpenCodexEditWindow } from '../CodexEditWindowRegistry';
 import { toolCallMatcher, unwrapShellCommand } from '../ToolCallMatcher';
 import { FeatureUsageService, FEATURES } from '../FeatureUsageService.ts';
+import { ToolUsageService } from '../ToolUsageService';
 import { historyManager } from '../../HistoryManager';
 import { addGitignoreBypass } from '../../file/WorkspaceEventBus';
 import { getSyncProvider, isDesktopTrulyAway } from '../SyncManager';
@@ -2626,6 +2627,34 @@ export class MessageStreamingHandler {
               FeatureUsageService.getInstance().recordUsage(FEATURES.SESSION_COMPLETED);
               if (!hadError && toolCallCount > 0) {
                 FeatureUsageService.getInstance().recordUsage(FEATURES.SESSION_COMPLETED_WITH_TOOLS);
+              }
+
+              // Record per-tool usage counts for this response (tips + report).
+              // Fire-and-forget: a counter write must never block completion.
+              if (toolCalls.length > 0) {
+                const observations = toolCalls
+                  .filter((tc) => typeof tc?.name === 'string')
+                  .map((tc) => ({
+                    name: tc.name as string,
+                    invocationId:
+                      typeof tc?.toolUseId === 'string'
+                        ? tc.toolUseId
+                        : typeof tc?.id === 'string'
+                          ? tc.id
+                          : undefined,
+                    isError:
+                      tc?.isError === true ||
+                      (tc?.result && (tc.result as any)?.success === false) ||
+                      false,
+                  }));
+                void ToolUsageService.getInstance()
+                  .recordBatch(observations, {
+                    provider: session.provider,
+                    projectPath: session.workspacePath || workspacePath || '',
+                  })
+                  .catch((err) =>
+                    logger.ai.warn('[MessageStreamingHandler] tool usage recordBatch failed', err),
+                  );
               }
 
               // Show community popup after 3 completed sessions that used tools.

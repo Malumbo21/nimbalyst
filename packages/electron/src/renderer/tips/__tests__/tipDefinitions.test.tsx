@@ -38,6 +38,7 @@ function createContext(
   overrides: Partial<TipTriggerContext> = {},
 ): TipTriggerContext {
   const featureUsage = overrides.featureUsage ?? createFeatureUsage();
+  const toolUsage = overrides.toolUsage ?? {};
 
   return {
     currentMode: 'files',
@@ -47,6 +48,9 @@ function createContext(
     featureUsage,
     hasBeenUsed: (feature) => (featureUsage[feature]?.count ?? 0) > 0,
     hasReachedCount: (feature, threshold) => (featureUsage[feature]?.count ?? 0) >= threshold,
+    toolUsage,
+    hasUsedTool: (toolKey) => (toolUsage[toolKey]?.count ?? 0) > 0,
+    toolUseCount: (toolKey) => toolUsage[toolKey]?.count ?? 0,
     ...overrides,
   };
 }
