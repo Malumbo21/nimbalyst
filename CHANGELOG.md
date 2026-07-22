@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reopening a shared tracker item shows its content again instead of a loading overlay that never clears.
 - Opening a shared tracker or document no longer crashes the editor with a lost-selection error.
 - Switching sessions no longer leaks event listeners, which could slow the window down and eventually crash it after days of uptime.
+- Right-clicking a file near the edge of the edited-files sidebar or the project picker now keeps the context menu on screen, and Escape closes it.
 
 ### Removed
 <!-- Removed features go here -->
