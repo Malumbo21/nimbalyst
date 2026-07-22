@@ -43,6 +43,7 @@ import { customEditorRegistry, CustomEditorWrapper } from '../CustomEditors';
 import { logger } from '../../utils/logger';
 import { createEditorHost } from './createEditorHost';
 import type { EditorHost, DiffConfig, ProjectFileWriteReceipt, EditorHostFileSystem } from '@nimbalyst/runtime';
+import { createProjectFileSystemHost } from '../../services/projectFileSystemHost';
 import { createExtensionStorage, createElementVisibilityTracker } from '@nimbalyst/runtime';
 import { setEditorContext, setEditorContextItems, clearEditorContext } from '../../stores/editorContextStore';
 import { store, editorHasUnacceptedChangesAtom, makeEditorKey } from '@nimbalyst/runtime/store';
@@ -2320,25 +2321,9 @@ export const TabEditor: React.FC<TabEditorProps> = ({
       },
 
       ...(workspaceId && !filePath.startsWith('virtual://') ? {
-        fs: {
-          read: (paths: string[]) =>
-            window.electronAPI.invoke('project-fs:read', paths),
-          write: async (edit) => {
-            const receipt = await window.electronAPI.invoke('project-fs:write', edit) as ProjectFileWriteReceipt;
-            await refreshCurrentFileAfterProjectWrite(receipt);
-            return receipt;
-          },
-          onChanged: (callback: (paths: string[]) => void) => {
-            const offDisk = window.electronAPI.onFileChangedOnDisk((data: { path: string }) => callback([data.path]));
-            const offWrite = window.electronAPI.on('project-fs:changed', (receipt: ProjectFileWriteReceipt) => {
-              callback(receipt.files.map((entry) => entry.path));
-            });
-            return () => {
-              offDisk();
-              offWrite();
-            };
-          },
-        } satisfies EditorHostFileSystem,
+        fs: createProjectFileSystemHost({
+          onAfterWrite: refreshCurrentFileAfterProjectWrite,
+        }) satisfies EditorHostFileSystem,
       } : {}),
 
       // Open only host-normalized HTTPS references outside the renderer.

@@ -114,6 +114,7 @@ import { resolveTranscriptClickPath } from '../../utils/resolveTranscriptClickPa
 import { autoCommitEnabledAtom, setAutoCommitEnabledAtom } from '../../store/atoms/autoCommitAtoms';
 import { diffPeekSizeAtom, setDiffPeekSizeAtom } from '../../store/atoms/diffPeekSizeAtoms';
 import { registerSessionWorkspace, loadInitialSessionFileState } from '../../store/listeners/fileStateListeners';
+import { sessionFileEditsAtom } from '../../store/atoms/sessionFiles';
 import { SESSION_PHASE_COLUMNS, setSessionPhaseAtom, type SessionPhase } from '../../store/atoms/sessionKanban';
 
 /**
@@ -809,6 +810,11 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
       console.error('[SessionTranscript] Failed to load initial session file state:', error);
     });
   }, [sessionId, workspacePath]);
+
+  // Edited files for the transcript's Files sidebar. The atom above is kept
+  // current by fileStateListeners; the panel takes this as a prop rather than
+  // running its own IPC subscription (docs/IPC_LISTENERS.md).
+  const sessionFileEdits = useAtomValue(sessionFileEditsAtom(sessionId));
 
   // ============================================================
   // Auto-focus input when session data loads
@@ -2389,6 +2395,7 @@ export const SessionTranscript = forwardRef<SessionTranscriptRef, SessionTranscr
             onCloseAndArchive={handleCloseAndArchive}
             onUnarchive={handleUnarchive}
             readFile={readFile}
+            fileEdits={sessionFileEdits}
             renderFilesHeader={mode === 'agent' ? () => (
               <>
                 <WakeupBanner sessionId={sessionId} />

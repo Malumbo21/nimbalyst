@@ -8,6 +8,7 @@ import {
   hiddenGutterItemsAtom,
   toggleGutterItemHiddenAtom,
 } from '../../../store/atoms/appSettings';
+import { openAICodexAuthVersionAtom } from '../../../store/atoms/openAICodexAuth';
 
 interface OpenAICodexPanelProps {
   config: ProviderConfig;
@@ -80,16 +81,14 @@ export function OpenAICodexPanel({
     }
   }, []);
 
+  // Re-check whenever the central listener reports the CLI's auth state moved
+  // (login/logout writes auth.json outside the app). Counter-atom pattern from
+  // docs/IPC_LISTENERS.md -- this panel must not subscribe to IPC itself.
+  const authVersion = useAtomValue(openAICodexAuthVersionAtom);
   useEffect(() => {
     if (!config.enabled) return;
     checkStatus();
-    const off = window.electronAPI.on('openai-codex:auth-updated', () => {
-      checkStatus();
-    });
-    return () => {
-      if (typeof off === 'function') off();
-    };
-  }, [config.enabled, checkStatus]);
+  }, [config.enabled, checkStatus, authVersion]);
 
   const handleChatGptLogin = async () => {
     setAuthBusy('chatgpt');

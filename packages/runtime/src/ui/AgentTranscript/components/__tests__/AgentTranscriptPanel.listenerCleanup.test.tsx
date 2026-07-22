@@ -1,24 +1,25 @@
 /**
  * Regression test for NIM-2019 / issue #943.
  *
- * `AgentTranscriptPanel` subscribes to `session-files:updated`, and
- * `WorkstreamSessionTabs` mounts it with `key={activeSessionId}` -- so every
- * session switch is a full remount. The panel used to unsubscribe with
- * `electronAPI.off(channel, callback)`, which is a no-op across Electron's
- * contextBridge (the callback re-proxies on every crossing, so identity-based
- * removal never matches). One listener leaked per session switch; the reporter
- * hit 101 of them after 44 hours of uptime, shortly before the renderer
- * crashed.
+ * `AgentTranscriptPanel` used to subscribe to `session-files:updated` itself.
+ * `WorkstreamSessionTabs` mounts it with `key={activeSessionId}`, so every
+ * session switch is a full remount, and the unsubscribe went through
+ * `electronAPI.off()` -- a no-op across Electron's contextBridge. One listener
+ * leaked per session switch; the reporter hit 101 of them after 44 hours of
+ * uptime, shortly before the renderer crashed.
  *
- * The fake `electronAPI` below models the bridge faithfully: `on()` returns a
- * working unsubscribe closure, and `off()` does nothing -- exactly what the
- * real preload did.
+ * The panel now takes `fileEdits` as a prop and touches no IPC at all, which is
+ * what docs/IPC_LISTENERS.md required of it in the first place. The fake
+ * `electronAPI` below models the bridge faithfully -- `on()` returns a working
+ * unsubscribe, `off()` does nothing -- so a reintroduced subscription shows up
+ * as a leak here regardless of which one it uses to clean up.
  */
 
 import React from 'react';
 import { render, cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentTranscriptPanel } from '../AgentTranscriptPanel';
+import type { FileEditSummary } from '../../types';
 import type { SessionData } from '../../../../ai/server/types';
 
 vi.mock('virtua', async () => {
@@ -40,14 +41,23 @@ vi.mock('virtua', async () => {
 
 /** Listeners currently attached, per channel. */
 const listeners = new Map<string, Set<(...args: any[]) => void>>();
+let invoke: ReturnType<typeof vi.fn>;
+
+function totalListeners(): number {
+  let total = 0;
+  for (const set of listeners.values()) total += set.size;
+  return total;
+}
 
 function installFakeElectronAPI() {
   listeners.clear();
+  invoke = vi.fn(async (channel: string) => {
+    if (channel === 'session-files:get-by-session') return { success: true, files: [] };
+    return { success: true };
+  });
+
   (window as any).electronAPI = {
-    invoke: vi.fn(async (channel: string) => {
-      if (channel === 'session-files:get-by-session') return { success: true, files: [] };
-      return { success: true };
-    }),
+    invoke,
     on: (channel: string, callback: (...args: any[]) => void) => {
       let set = listeners.get(channel);
       if (!set) {
@@ -60,7 +70,7 @@ function installFakeElectronAPI() {
       set.add(handler);
       return () => set!.delete(handler);
     },
-    // Modelled on the real bridge: identity-based removal cannot find the
+    // Modelled on the old bridge: identity-based removal could not find the
     // wrapper, so this never removed anything.
     off: () => {},
   };
@@ -78,7 +88,7 @@ function makeSessionData(sessionId: string): SessionData {
   } as unknown as SessionData;
 }
 
-describe('AgentTranscriptPanel session-files:updated subscription', () => {
+describe('AgentTranscriptPanel IPC discipline', () => {
   beforeEach(() => {
     installFakeElectronAPI();
     // jsdom has no CSS Custom Highlight API; TranscriptSearchBar uses it.
@@ -90,16 +100,21 @@ describe('AgentTranscriptPanel session-files:updated subscription', () => {
     delete (window as any).electronAPI;
   });
 
-  it('leaves no session-files:updated listener behind after unmount', () => {
-    const { unmount } = render(
+  it('subscribes to no IPC channel at all', () => {
+    render(
       <AgentTranscriptPanel sessionId="session-a" sessionData={makeSessionData('session-a')} />
     );
 
-    expect(listeners.get('session-files:updated')?.size ?? 0).toBe(1);
+    expect(totalListeners()).toBe(0);
+  });
 
-    unmount();
+  it('does not fetch session files itself -- the host supplies them', () => {
+    render(
+      <AgentTranscriptPanel sessionId="session-a" sessionData={makeSessionData('session-a')} />
+    );
 
-    expect(listeners.get('session-files:updated')?.size ?? 0).toBe(0);
+    const fetchedChannels = invoke.mock.calls.map(([channel]) => channel);
+    expect(fetchedChannels).not.toContain('session-files:get-by-session');
   });
 
   it('does not accumulate listeners across repeated session switches', () => {
@@ -113,6 +128,24 @@ describe('AgentTranscriptPanel session-files:updated subscription', () => {
       unmount();
     }
 
-    expect(listeners.get('session-files:updated')?.size ?? 0).toBe(0);
+    expect(totalListeners()).toBe(0);
+  });
+
+  it('renders the file edits the host passes in', () => {
+    const fileEdits: FileEditSummary[] = [
+      { filePath: '/tmp/workspace/src/a.ts', linkType: 'edited', timestamp: '2026-07-22T00:00:00.000Z' },
+      { filePath: '/tmp/workspace/src/b.ts', linkType: 'edited', timestamp: '2026-07-22T00:00:01.000Z' },
+    ];
+
+    const { container } = render(
+      <AgentTranscriptPanel
+        sessionId="session-a"
+        sessionData={makeSessionData('session-a')}
+        fileEdits={fileEdits}
+      />
+    );
+
+    expect(container.textContent).toContain('a.ts');
+    expect(container.textContent).toContain('b.ts');
   });
 });

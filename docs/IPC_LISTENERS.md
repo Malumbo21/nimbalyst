@@ -10,6 +10,8 @@ A subscription installed exactly once -- at module load or via an install-once g
 
 It was removed in the fix for [#943](https://github.com/nimbalyst/nimbalyst/issues/943). With `contextIsolation: true` Electron hands the preload a *fresh proxy* of the renderer's callback on every crossing, so an `off()` that looks the handler up by callback identity can never find it — every call was a silent no-op. That leaked one `session-files:updated` listener per session switch until a user's renderer crashed after 44 hours of uptime. The returned closure captures the real handler directly, so nothing has to cross the bridge to remove it.
 
+**This is enforced, not advisory.** `store/listeners/__tests__/noComponentIpcSubscriptions.test.ts` fails the pre-push suite if `electronAPI.on(` appears anywhere outside the sanctioned directories, untracked files included. There is deliberately no exemption list — if the guard fires, move the subscription rather than adding your file to it. Before #943 this rule was documentation only, and the violation that crashed a user's renderer sat in the tree for months without anything complaining.
+
 All non-singleton IPC event handling follows this architecture:
 
 1. **Central listeners** subscribe to IPC events ONCE at app startup
@@ -88,7 +90,9 @@ DO NOT add component-level IPC subscriptions for these events. Use the existing 
 - **Voice mode** (`store/listeners/voiceModeListeners.ts`): all `voice-mode:*` events
 - **Theme** (`store/listeners/themeListeners.ts`): `theme-change` -> `themeIdAtom`
 - **Permissions** (`store/listeners/permissionListeners.ts`): `permissions:changed` -> `permissionsChangedVersionAtom` (counter; consumers re-fetch)
+- **Codex auth** (`store/listeners/openAICodexAuthListeners.ts`): `openai-codex:auth-updated` -> `openAICodexAuthVersionAtom` (counter; the settings panel re-fetches)
 - **Sync** (`store/listeners/syncListeners.ts`): `sync:status-changed` -> `syncStatusUpdateAtom`
+- **Database migration** (`store/listeners/dbMigrationListeners.ts`): `db:migration:phase`/`progress`/`complete`/`failed` -> the `dbMigration*` atoms
 - **Update toast** (`store/listeners/updateListeners.ts`): all `update-toast:*` events
 - **Tracker sync** (`store/listeners/trackerSyncListeners.ts`): `document-service:tracker-items-changed`, `document-service:metadata-changed`
 - **Network availability** (`store/listeners/networkAvailabilityListeners.ts`): `sync:network-available`
@@ -127,6 +131,7 @@ packages/electron/src/renderer/store/
     appCommandListeners.ts
     claudeUsageListeners.ts
     codexUsageListeners.ts
+    dbMigrationListeners.ts
     fileChangeListeners.ts
     fileStateListeners.ts
     fileTreeListeners.ts
@@ -134,6 +139,7 @@ packages/electron/src/renderer/store/
     menuCommandListeners.ts
     networkAvailabilityListeners.ts
     notificationListeners.ts
+    openAICodexAuthListeners.ts
     permissionListeners.ts
     sessionListListeners.ts
     sessionTranscriptListeners.ts
@@ -161,6 +167,7 @@ These call `electronAPI.on(...)` outside `store/listeners/` and are fine because
 - `extensions/panels/PanelHostImpl.ts` -- generic event pass-through exposed to extensions; the channel is supplied by the extension at runtime, so it cannot be enumerated up front
 - `store/atoms/terminals.ts` -- module-level init that runs once for `terminal:list-changed`
 - `store/atoms/appSettings.ts` -- `debug-flags:changed` registered once via an `installed` flag inside `initDebugFlags()`
+- `services/projectFileSystemHost.ts` -- `EditorHost.fs.onChanged`, a per-editor subscription the calling editor disposes; it lives in `services/` rather than `TabEditor.tsx` precisely because it touches IPC
 
 When you add another singleton subscription, put it in one of these directories (`store/listeners/`, `store/atoms/`, `store/sessionStateListeners.ts`, `services/`, `plugins/`, `extensions/panels/`) and either run it at module top level or guard it with an install-once flag. Do **not** put a "module-level" subscription inside a component file -- the component file gets re-imported in test contexts, HMR, and lazy-loaded routes, and the subscription leaks through.
 
