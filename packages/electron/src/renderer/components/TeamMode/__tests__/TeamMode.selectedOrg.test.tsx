@@ -53,6 +53,40 @@ function installApi() {
 describe('TeamMode organization targeting', () => {
   afterEach(() => cleanup());
 
+  // A targeted open of an org you have since left (or one that vanished on a
+  // refetch) must not strand the user on the unbound "create an organization"
+  // surface with no way back to the orgs they do belong to.
+  it('recovers onto an active organization when the selected one is stale', async () => {
+    installApi();
+    const store = createStore();
+    store.set(selectedOrgIdAtom, 'org-i-left');
+    render(<Provider store={store}><TeamMode /></Provider>);
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Workspace Org' })).toBeTruthy());
+    expect(store.get(selectedOrgIdAtom)).toBe('org-workspace');
+  });
+
+  it('keeps the target when the directory comes back empty rather than clearing it', async () => {
+    installApi();
+    (window as any).electronAPI.organization.list = vi.fn().mockResolvedValue({ success: false });
+    const store = createStore();
+    store.set(selectedOrgIdAtom, 'org-other');
+    render(<Provider store={store}><TeamMode /></Provider>);
+
+    await waitFor(() => expect(screen.getByText(/Create an organization to collaborate/)).toBeTruthy());
+    expect(store.get(selectedOrgIdAtom)).toBe('org-other');
+  });
+
+  it('offers the switcher on the unbound surface when active organizations exist', async () => {
+    installApi();
+    const store = createStore();
+    store.set(selectedOrgIdAtom, null);
+    // No workspace and no selection: the unbound surface, but the user is in orgs.
+    render(<Provider store={store}><TeamMode /></Provider>);
+
+    await waitFor(() => expect(screen.getByTestId('org-window-switcher')).toBeTruthy());
+  });
+
   it('administers the explicitly selected non-workspace organization', async () => {
     installApi();
     const store = createStore();

@@ -67,6 +67,7 @@ import {
     switchPersonalSyncProfile,
 } from '../services/PersonalSyncProfiles';
 import { purgeOfflineCollabAccounts } from '../services/CollabOfflineAccountLifecycle';
+import { listPersonalSyncDevices } from '../services/PersonalSyncDevicesService';
 
 // Track if we've subscribed to sync status changes
 let syncStatusListenerSetup = false;
@@ -973,51 +974,10 @@ export function registerSettingsHandlers() {
         }
     });
 
-    // Get connected devices from the sync server
-    safeHandle('sync:get-devices', async () => {
-        const config = getSessionSyncConfig();
-
-        if (!config?.enabled || !config.serverUrl) {
-            return { success: false, devices: [], error: 'Sync not configured' };
-        }
-
-        // Require Stytch authentication
-        const jwt = StytchAuth.getSessionJwt();
-        if (!jwt) {
-            return { success: false, devices: [], error: 'Not authenticated' };
-        }
-
-        try {
-            // Fetch via the /api/sessions endpoint which forwards to IndexRoom status
-            const httpUrl = config.serverUrl
-                .replace(/^ws:/, 'http:')
-                .replace(/^wss:/, 'https:')
-                .replace(/\/$/, '');
-
-            const response = await fetch(`${httpUrl}/api/sessions`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${jwt}`,
-                },
-                signal: AbortSignal.timeout(5000),
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                return {
-                    success: true,
-                    devices: data.devices || [],
-                    sessionCount: data.session_count || 0,
-                    projectCount: data.project_count || 0,
-                };
-            } else {
-                return { success: false, devices: [], error: `Server returned ${response.status}` };
-            }
-        } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to get devices';
-            return { success: false, devices: [], error: message };
-        }
-    });
+    // Read the personal account's device list with the canonical derived sync
+    // URL and personal-org JWT. The stored config intentionally omits serverUrl
+    // when production is selected, and a team JWT targets a different member.
+    safeHandle('sync:get-devices', listPersonalSyncDevices);
 
     // Get sync status for the navigation gutter button
     safeHandle('sync:get-status', async (_event, workspacePath?: string) => {
@@ -1121,6 +1081,54 @@ export function registerSettingsHandlers() {
             const message = error instanceof Error ? error.message : 'Failed to get doc sync status';
             return { success: false, error: message };
         }
+    });
+
+    // Apply a whole project selection at once. The multi-select UI can change
+    // every project in one interaction; routing that through per-project
+    // toggles meant N read-modify-writes and up to N sync triggers.
+    safeHandle('sync:set-project-selection', async (
+        _event,
+        selection: { enabledProjects?: string[]; docSyncEnabledProjects?: string[] },
+    ) => {
+        const config = getSessionSyncConfig() ?? { enabled: false, serverUrl: '', enabledProjects: [] };
+        const previousEnabled = config.enabledProjects ?? [];
+        const previousDocSync = config.docSyncEnabledProjects ?? [];
+        const enabledProjects = [...new Set(selection?.enabledProjects ?? [])];
+        const docSyncEnabledProjects = [...new Set(selection?.docSyncEnabledProjects ?? [])];
+
+        const addedProjects = enabledProjects.filter((path) => !previousEnabled.includes(path));
+        const docSyncChanged = docSyncEnabledProjects.length !== previousDocSync.length
+            || docSyncEnabledProjects.some((path) => !previousDocSync.includes(path));
+
+        // One write for the whole selection.
+        setSessionSyncConfig(persistActivePersonalSyncProfile({
+            ...config,
+            enabledProjects,
+            docSyncEnabledProjects,
+            enabled: enabledProjects.length > 0,
+        }));
+        logger.store.info(
+            `[sync:set-project-selection] ${enabledProjects.length} project(s) enabled, `
+            + `${docSyncEnabledProjects.length} with document sync`,
+        );
+
+        // ...and one sync trigger. Doc-sync membership is applied during
+        // reinitialization; a project that only gained session sync just needs
+        // its sessions pushed.
+        try {
+            if (docSyncChanged || !isSyncProviderReady()) {
+                await repositoryManager.reinitializeSyncWithNewConfig();
+            } else if (addedProjects.length > 0) {
+                triggerIncrementalSync().catch(err => {
+                    logger.store.error('[sync:set-project-selection] Failed to trigger sync:', err);
+                });
+            }
+        } catch (error) {
+            logger.store.error('[sync:set-project-selection] Failed to apply sync config:', error);
+            return { success: false, error: error instanceof Error ? error.message : String(error) };
+        }
+
+        return { success: true, enabledProjects, docSyncEnabledProjects };
     });
 
     // Toggle sync for a specific project

@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { ActionGuard } from './ActionGuard';
+import { AlphaBadge } from '../../common/AlphaBadge';
+import { TEAM_ALPHA_TOOLTIP, TeamAlphaNotice } from '../../common/TeamAlphaNotice';
 
 interface Member {
   memberId: string;
@@ -65,7 +67,10 @@ export function OrganizationMembersRolesPanel({
   return (
     <section className="organization-members-roles-panel" data-testid="organization-members-roles-panel" data-component="OrganizationMembersRolesPanel">
       <header className="mb-5 border-b border-[var(--nim-border)] pb-4">
-        <h2 className="m-0 text-xl font-semibold">Members &amp; Roles</h2>
+        <h2 className="m-0 flex items-center gap-2 text-xl font-semibold">
+          Members &amp; Roles
+          <AlphaBadge size="sm" tooltip={TEAM_ALPHA_TOOLTIP} />
+        </h2>
         <p className="m-0 mt-1 text-sm text-[var(--nim-text-muted)]">
           {selected ? `${selected.name} · ${callerRole}${selected.sourceEmail ? ` · ${selected.sourceEmail}` : ''}` : 'Choose an organization.'}
         </p>
@@ -98,6 +103,7 @@ export function OrganizationMembersRolesPanel({
 
       {allowOrganizationCreation && <details className="new-organization-card mb-5 rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] p-3" data-testid="new-organization-card">
         <summary className="cursor-pointer text-sm font-semibold">New organization</summary>
+        <TeamAlphaNotice className="mt-3" />
         <form
           className="mt-3 flex flex-col gap-2"
           data-testid="new-organization-form"

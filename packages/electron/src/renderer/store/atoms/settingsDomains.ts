@@ -24,6 +24,12 @@ export interface OrganizationDirectoryEntry {
   sourcePersonalOrgId?: string;
   owningPersonalOrgId?: string | null;
   sourceEmail?: string | null;
+  /** Project registry for the org; absent on snapshots from older workers. */
+  projects?: Array<{ projectId: string; name: string | null; slug: string | null }>;
+  /** Every signed-in account that resolved a membership in this org. */
+  accountBindings?: Array<{ personalOrgId: string; teamMemberId: string }>;
+  /** Account chosen from the explicit local binding — the one whose JWT this org uses. */
+  boundPersonalOrgId?: string | null;
 }
 
 // These domains deliberately do not reference each other. Switching a personal

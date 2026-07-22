@@ -10,12 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Organizations now have their own management window with a switcher between them, and Account settings lists the organizations each signed-in account belongs to.
 - New agent sessions now include a contextual tip for launching background sessions from anywhere with Cmd+Shift+N without leaving the current view.
 - Extensions can contribute first-class Application or Project settings pages with per-repository context, and Memory now has its own Project settings page.
 - The AI Usage Report now shows built-in and extension tool usage over time and by project, with historical backfill and contextual tips for undiscovered tools.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+- Organization and sharing screens now carry an alpha label: Nimbalyst Teams is free during alpha, may have bugs, and will require a paid subscription after launch.
 - The desktop app now runs on Electron 43, and file and folder pickers open in the active workspace or their last-used directory instead of defaulting to Downloads.
 - Updated the bundled Claude Agent engine to Claude Code 2.1.215; subagents no longer spawn their own nested subagents by default, and the number running at once is now capped.
 

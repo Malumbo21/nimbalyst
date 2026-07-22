@@ -10,6 +10,8 @@ import type { DialogConfig } from '../contexts/DialogContext.types';
 import { MaterialSymbol } from '@nimbalyst/runtime';
 import { DIALOG_IDS } from './registry';
 import { ShareToTeamDialog } from '../components/ShareToTeamDialog';
+import { AlphaBadge } from '../components/common/AlphaBadge';
+import { TEAM_ALPHA_TOOLTIP, TeamAlphaNotice } from '../components/common/TeamAlphaNotice';
 import type { CollaborativeDocumentTypeDescriptor } from '../services/CollaborativeDocumentTypeCatalog';
 
 // ============================================================================
@@ -93,10 +95,14 @@ function CreateTeamDialogWrapper({
       >
         {/* Header */}
         <div className="px-6 pt-5 pb-0">
-          <h3 className="text-lg font-semibold text-[var(--nim-text)] mb-1">Create Team</h3>
-          <p className="text-[13px] text-[var(--nim-text-faint)] mb-5">
-            Team members can collaborate on shared tracker items and documents.
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-[var(--nim-text)] mb-1">
+            Create organization
+            <AlphaBadge size="sm" tooltip={TEAM_ALPHA_TOOLTIP} />
+          </h3>
+          <p className="text-[13px] text-[var(--nim-text-faint)] mb-3">
+            Members of an organization can collaborate on shared tracker items and documents.
           </p>
+          <TeamAlphaNotice className="mb-5" />
         </div>
 
         {/* Body */}
@@ -128,7 +134,7 @@ function CreateTeamDialogWrapper({
                 ))}
               </div>
               <div className="text-[11px] text-[var(--nim-text-disabled)] mt-1">
-                The team will be created under this account.
+                The organization will be created under this account.
               </div>
             </div>
           )}
@@ -136,7 +142,7 @@ function CreateTeamDialogWrapper({
           {/* Team Name */}
           <div className="mb-4">
             <label className="block text-[12px] font-medium text-[var(--nim-text-muted)] mb-1.5">
-              Team Name
+              Organization name
             </label>
             <input
               type="text"
@@ -147,7 +153,7 @@ function CreateTeamDialogWrapper({
               autoFocus
             />
             <div className="text-[11px] text-[var(--nim-text-disabled)] mt-1">
-              Visible to all team members.
+              Visible to everyone in the organization.
             </div>
           </div>
 
@@ -166,7 +172,7 @@ function CreateTeamDialogWrapper({
               </span>
             </div>
             <div className="text-[11px] text-[var(--nim-text-disabled)] mt-1.5">
-              Any team member who opens a clone of this repo will be automatically connected.
+              Any member who opens a clone of this repo will be automatically connected.
             </div>
           </div>
 
@@ -180,7 +186,7 @@ function CreateTeamDialogWrapper({
               <div>
                 <div className="text-[12px] font-medium text-[var(--nim-text)] mb-0.5">Encrypted at rest</div>
                 <div className="text-[11px] text-[var(--nim-text-faint)] leading-snug">
-                  Team data is encrypted at rest, with keys managed by the service. Members can access shared content as soon as they join, with no key exchange or need to be online at the same time.
+                  Organization data is encrypted at rest, with keys managed by the service. Members can access shared content as soon as they join, with no key exchange or need to be online at the same time.
                 </div>
               </div>
             </div>
@@ -204,7 +210,7 @@ function CreateTeamDialogWrapper({
                 : 'cursor-not-allowed opacity-50'
             }`}
           >
-            Create Team
+            Create organization
           </button>
         </div>
       </div>

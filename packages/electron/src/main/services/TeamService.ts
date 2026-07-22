@@ -2007,8 +2007,12 @@ export function registerTeamHandlers(): void {
     }
   });
 
-  safeHandle('team:list', async () => {
+  safeHandle('team:list', async (_event, options?: { forceRefresh?: boolean }) => {
     try {
+      // The directory cache is invalidated by events (join/create/delete/auth
+      // change); `forceRefresh` backs the manual Refresh affordance in Account
+      // settings for the cases those events miss (e.g. invited from elsewhere).
+      if (options?.forceRefresh) invalidateListTeamsCache();
       const teams = await listTeams();
       scheduleSilentEncryptionMigrations(teams);
       return { success: true, teams };

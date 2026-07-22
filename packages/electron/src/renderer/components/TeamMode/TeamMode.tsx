@@ -1,13 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { MaterialSymbol } from '@nimbalyst/runtime';
-import { useAtomValue } from 'jotai';
+import { useAtom } from 'jotai';
 
 import { OrganizationBillingPanel } from '../Settings/panels/OrganizationBillingPanel';
 import { OrganizationDangerZone } from '../Settings/panels/OrganizationDangerZone';
 import { OrganizationMembersRolesPanel } from '../Settings/panels/OrganizationMembersRolesPanel';
 import { OrganizationProjectsPanel } from '../Settings/panels/OrganizationProjectsPanel';
 import { ProjectSharingPanel } from '../Settings/panels/ProjectSharingPanel';
+import { AlphaBadge } from '../common/AlphaBadge';
+import { TEAM_ALPHA_TOOLTIP, TeamAlphaNotice } from '../common/TeamAlphaNotice';
 import { selectedOrgIdAtom } from '../../store/atoms/orgScope';
+import { OrgWindowSwitcher } from './OrgWindowSwitcher';
+import { isActiveMembership, persistLastSelectedOrgId, resolveDefaultOrgId } from './defaultOrg';
 
 // Workstream F will replace this interim destination with the shipped console route.
 export const TEAM_CONSOLE_URL = 'https://console.nimbalyst.com';
@@ -31,8 +35,9 @@ interface TeamSummary {
 }
 
 export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: string; isActive?: boolean }) {
-  const selectedOrgId = useAtomValue(selectedOrgIdAtom);
+  const [selectedOrgId, setSelectedOrgId] = useAtom(selectedOrgIdAtom);
   const [team, setTeam] = useState<TeamSummary | null>(null);
+  const [organizations, setOrganizations] = useState<TeamSummary[]>([]);
   const [boundEmail, setBoundEmail] = useState<string | null>(null);
   const [tab, setTab] = useState<AdminTab>('members');
   // Which org project's access editor is open inside the Projects tab, if any.
@@ -50,20 +55,34 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
         ? window.electronAPI.team.findForWorkspace(workspacePath)
         : Promise.resolve(null),
       window.electronAPI.stytch.getAccounts(),
-      selectedOrgId
-        ? window.electronAPI.organization.list()
-        : Promise.resolve(null),
+      // Always listed: the switcher offers every active membership, not just
+      // the targeted one. `team:list` is cached in main, so this is cheap.
+      window.electronAPI.organization.list(),
     ]).then(([result, accounts, directory]) => {
       if (cancelled) return;
       const workspaceTeam = result?.team ?? result ?? null;
       const organizations: TeamSummary[] = directory?.success && Array.isArray(directory.teams)
         ? directory.teams
         : [];
+      setOrganizations(organizations);
       const selectedTeam = selectedOrgId
         ? organizations.find((organization) =>
-          organization.orgId === selectedOrgId
-          && (!organization.membershipType || organization.membershipType === 'active_member')) ?? null
+          organization.orgId === selectedOrgId && isActiveMembership(organization.membershipType)) ?? null
         : null;
+
+      // The selected org is stale (left it, deleted, or the invite was never
+      // accepted). Recover onto a real org rather than stranding the user on
+      // the unbound "create an organization" surface. Only when another active
+      // org exists — a transient empty list must not clear the target.
+      if (selectedOrgId && !selectedTeam) {
+        const fallbackOrgId = resolveDefaultOrgId(null, organizations);
+        if (fallbackOrgId && fallbackOrgId !== selectedOrgId) {
+          setSelectedOrgId(fallbackOrgId);
+          void persistLastSelectedOrgId(fallbackOrgId);
+          return; // this effect re-runs with the recovered org
+        }
+      }
+
       const found = selectedOrgId ? selectedTeam : workspaceTeam;
       setTeam(found?.orgId ? found : null);
       const personalOrgId = found?.boundPersonalOrgId ?? found?.owningPersonalOrgId;
@@ -87,11 +106,27 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
     return (
       <section className="team-mode team-mode-unbound flex h-full flex-col overflow-hidden" data-component="TeamMode">
         <header className="team-mode-header border-b border-[var(--nim-border)] px-6 py-5">
-          <h1 className="m-0 text-xl font-semibold text-[var(--nim-text)]">Organizations</h1>
+          <h1 className="m-0 flex items-center gap-2 text-xl font-semibold text-[var(--nim-text)]">
+            Organizations
+            <AlphaBadge size="sm" tooltip={TEAM_ALPHA_TOOLTIP} />
+          </h1>
           <p className="m-0 mt-1 text-sm text-[var(--nim-text-muted)]">Create an organization to collaborate with a team, or accept a pending invitation.</p>
+          <TeamAlphaNotice className="mt-2.5 max-w-[640px]" />
         </header>
         <main className="team-mode-content flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-[900px]"><OrganizationMembersRolesPanel orgId="" /></div>
+          <div className="mx-auto max-w-[900px]">
+            {/* Escape hatch: never leave the user here with orgs they could
+                administer but no way to reach them. */}
+            <OrgWindowSwitcher
+              organizations={organizations}
+              selectedOrgId={null}
+              onSelect={(orgId) => {
+                setSelectedOrgId(orgId);
+                void persistLastSelectedOrgId(orgId);
+              }}
+            />
+            <OrganizationMembersRolesPanel orgId="" />
+          </div>
         </main>
       </section>
     );
@@ -104,7 +139,10 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
           {team.name.slice(0, 2).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1 select-text">
-          <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)]">Administer organization</p>
+          <p className="m-0 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--nim-text-faint)]">
+            Administer organization
+            <AlphaBadge size="xs" tooltip={TEAM_ALPHA_TOOLTIP} />
+          </p>
           <h1 className="m-0 truncate text-xl font-semibold text-[var(--nim-text)]">{team.name}</h1>
           {boundEmail && <p className="m-0 mt-0.5 truncate text-xs text-[var(--nim-text-muted)]">Owned by {boundEmail}</p>}
         </div>
@@ -119,6 +157,14 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
 
       <div className="team-mode-body flex min-h-0 flex-1">
         <nav className="team-mode-nav flex w-[200px] shrink-0 flex-col gap-1 border-r border-[var(--nim-border)] p-3">
+          <OrgWindowSwitcher
+            organizations={organizations}
+            selectedOrgId={team.orgId}
+            onSelect={(orgId) => {
+              setSelectedOrgId(orgId);
+              void persistLastSelectedOrgId(orgId);
+            }}
+          />
           {ADMIN_TABS.map((item) => (
             <button
               key={item.id}
@@ -139,6 +185,7 @@ export function TeamMode({ workspacePath, isActive = true }: { workspacePath?: s
 
         <main className="team-mode-content min-w-0 flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-[900px]">
+            <TeamAlphaNotice className="mb-5 rounded-lg border border-[var(--nim-border)] bg-[var(--nim-bg-secondary)] p-3" />
             {tab === 'members' && <OrganizationMembersRolesPanel orgId={team.orgId} allowOrganizationCreation={false} />}
             {tab === 'projects' && (
               accessProjectId

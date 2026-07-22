@@ -9,6 +9,7 @@ import {
 } from '@floating-ui/react';
 import { MaterialSymbol, getProviderIcon } from '@nimbalyst/runtime';
 import { AlphaBadge, SETTINGS_ALPHA_TOOLTIP } from '../common/AlphaBadge';
+import { TEAM_ALPHA_TOOLTIP } from '../common/TeamAlphaNotice';
 import { developerModeAtom } from '../../store/atoms/appSettings';
 import {
   getSettingsRoutesForScope,
@@ -149,7 +150,12 @@ export const SettingsSidebar: React.FC<SettingsSidebarProps> = ({
                   </span>
                   <span className="settings-sidebar-item-name flex-1 truncate">{route.label}</span>
                   {isSettingsRoute && route.source === 'builtin' && route.isAlpha && (
-                    <AlphaBadge size="xs" tooltip={SETTINGS_ALPHA_TOOLTIP} />
+                    <AlphaBadge
+                      size="xs"
+                      // Sharing is the org/Teams entry point, so it gets the
+                      // Teams-specific alpha + pricing disclosure.
+                      tooltip={route.id === 'project-sharing' ? TEAM_ALPHA_TOOLTIP : SETTINGS_ALPHA_TOOLTIP}
+                    />
                   )}
                   {(status === 'success' || status === 'active' || status === 'error' || status === 'denied') && (
                     <span className={`settings-sidebar-item-status h-2 w-2 rounded-full ${status === 'success' || status === 'active' ? 'bg-[var(--nim-success)]' : 'bg-[var(--nim-error)]'}`} />

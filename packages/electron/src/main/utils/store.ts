@@ -76,6 +76,10 @@ interface AppStoreSchema {
   releaseChannel?: ReleaseChannel;
   // Shared fallback for native file/folder dialogs outside workspace context.
   lastDialogDirectory?: string;
+  // Organization the org-management window falls back to when opened without an
+  // explicit orgId (Window > Organization Manager, or the switcher's untargeted
+  // entries). Written whenever the selection changes.
+  lastSelectedOrgId?: string;
   // Default AI model for new sessions (format: "provider:model" e.g., "claude-code:sonnet")
   defaultAIModel?: string;
   // Default GitHub CLI account login for PR review. A per-project

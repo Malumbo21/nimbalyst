@@ -60,7 +60,12 @@ import {
 } from '../../store/atoms/appSettings';
 import { shouldShowDirectChatProviderSettings } from '../../utils/chatProviderVisibility';
 import { omitModelsField } from '@nimbalyst/runtime/ai/server/utils/modelConfigUtils';
-import { AccountSettingsPanel } from './panels/AccountSettingsPanel';
+import {
+  AccountDevicesSettingsPanel,
+  AccountSettingsPanel,
+  AccountSharedLinksSettingsPanel,
+  MobileAppSettingsPanel,
+} from './panels/AccountSettingsPanel';
 import { ProjectSharingPanel, type ProjectSettingsTarget } from './panels/ProjectSharingPanel';
 import { ProjectAIProvidersPanel } from './panels/ProjectAIProvidersPanel';
 
@@ -921,14 +926,24 @@ export function SettingsView({
             workspacePath={scope === 'project' ? workspacePath ?? undefined : undefined}
           />
         );
+      // One account route, one panel — no stacked headers. Legacy personal-*
+      // ids resolve to the route that now owns that section.
       case 'account':
       case 'personal-accounts':
-      case 'personal-mobile':
-      case 'personal-devices':
-      case 'personal-shared-links':
-      case 'sync':
-      case 'shared-links':
         return <AccountSettingsPanel />;
+      // 'sync' is the mobile tips' deep link: they want pairing and the
+      // prevent-sleep control, which both live in the Mobile App panel.
+      case 'account-mobile':
+      case 'personal-mobile':
+      case 'sync':
+        return <MobileAppSettingsPanel />;
+      case 'account-devices':
+      case 'personal-devices':
+        return <AccountDevicesSettingsPanel />;
+      case 'account-shared-links':
+      case 'personal-shared-links':
+      case 'shared-links':
+        return <AccountSharedLinksSettingsPanel />;
       case 'themes':
         return (
           <ThemesPanel

@@ -1551,7 +1551,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Team Management (all member ops take explicit orgId -- per-workspace, not global)
   team: {
-    list: () => ipcRenderer.invoke('team:list'),
+    list: (options?: { forceRefresh?: boolean }) => ipcRenderer.invoke('team:list', options),
     /** Open (or focus + retarget) the dedicated org-management window. */
     openManagementWindow: (target?: { orgId?: string; workspacePath?: string }) =>
       ipcRenderer.invoke('team-window:open', target),

@@ -22,7 +22,16 @@ export type ApplicationSettingsCategory =
   | 'mcp-servers'
   | 'tools-mcp';
 
-export type AccountSettingsCategory = 'account';
+/**
+ * Each account route renders exactly ONE panel. They used to all resolve to a
+ * single stacked panel, which is why the screen opened with an "Account" title
+ * immediately followed by an "Account & Sync" section header.
+ */
+export type AccountSettingsCategory =
+  | 'account'
+  | 'account-mobile'
+  | 'account-devices'
+  | 'account-shared-links';
 
 /** Old personal routes remain accepted only so persisted links can migrate. */
 export type PersonalSettingsCategory =
@@ -141,9 +150,12 @@ const builtinSettingsRouteDefinitions: readonly Omit<BuiltinSettingsRoute, 'sour
   { id: 'mcp-servers', scope: 'application', group: 'Extensions', label: 'MCP Servers', icon: 'dns' },
   { id: 'tools-mcp', scope: 'application', group: 'Extensions', label: 'Tools & Token Cost', icon: 'data_usage' },
 
-  { id: 'account', scope: 'account', group: 'Account', label: 'Account', icon: 'account_circle' },
+  { id: 'account', scope: 'account', group: 'Account', label: 'Accounts', icon: 'account_circle' },
+  { id: 'account-mobile', scope: 'account', group: 'Account', label: 'Mobile App', icon: 'smartphone' },
+  { id: 'account-devices', scope: 'account', group: 'Account', label: 'Devices', icon: 'devices' },
+  { id: 'account-shared-links', scope: 'account', group: 'Account', label: 'Shared Links', icon: 'link' },
 
-  { id: 'project-sharing', scope: 'project', group: 'Project', label: 'Sharing', icon: 'group' },
+  { id: 'project-sharing', scope: 'project', group: 'Project', label: 'Sharing', icon: 'group', isAlpha: true },
   { id: 'project-agent-permissions', scope: 'project', group: 'Project', label: 'Agent Permissions', icon: 'shield' },
   { id: 'project-trackers', scope: 'project', group: 'Project', label: 'Trackers', icon: 'assignment' },
   { id: 'project-ai-providers', scope: 'project', group: 'Project', label: 'AI Providers', icon: 'smart_toy' },
@@ -238,8 +250,24 @@ export function normalizeSettingsDestination(link: LegacySettingsLink): Settings
     || legacyCategory === 'sync'
     || legacyCategory === 'shared-links'
     || legacyCategory?.startsWith('personal-')
+    || legacyCategory?.startsWith('account-')
   ) {
-    return { scope: 'account', category: 'account' };
+    // Old personal-* links land on the account route that now owns that section.
+    const category: AccountSettingsCategory =
+      // 'sync' is the tips' deep link to pairing / prevent-sleep, both of which
+      // live in the Mobile App panel.
+      legacyCategory === 'personal-mobile'
+      || legacyCategory === 'account-mobile'
+      || legacyCategory === 'sync'
+        ? 'account-mobile'
+        : legacyCategory === 'personal-devices' || legacyCategory === 'account-devices'
+          ? 'account-devices'
+          : legacyCategory === 'personal-shared-links'
+            || legacyCategory === 'shared-links'
+            || legacyCategory === 'account-shared-links'
+            ? 'account-shared-links'
+            : 'account';
+    return { scope: 'account', category };
   }
 
   if (rawScope === 'project') {

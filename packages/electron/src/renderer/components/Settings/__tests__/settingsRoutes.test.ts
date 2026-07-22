@@ -154,9 +154,11 @@ describe('settings route registry', () => {
   });
 
   it('translates legacy deep links without crossing identity lanes', () => {
+    // 'sync' is the mobile tips' deep link (pairing / prevent-sleep), so it
+    // resolves to the Mobile App panel rather than the accounts list.
     expect(normalizeSettingsDestination({ category: 'sync', scope: 'user' })).toEqual({
       scope: 'account',
-      category: 'account',
+      category: 'account-mobile',
     });
     expect(normalizeSettingsDestination({ category: 'org', scope: 'organization', orgId: 'org-1' })).toBeNull();
     expect(normalizeSettingsDestination({

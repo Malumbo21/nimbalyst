@@ -813,16 +813,20 @@ const SYNC_PERSIST_DEBOUNCE_MS = 500;
  * Persist sync config to main process.
  * Debounced to avoid excessive IPC calls during rapid changes.
  */
-function scheduleSyncPersist(config: SyncConfig): void {
+function scheduleSyncPersist(): void {
   if (syncPersistTimer) {
     clearTimeout(syncPersistTimer);
   }
   syncPersistTimer = setTimeout(async () => {
     syncPersistTimer = null;
-    if (typeof window !== 'undefined' && window.electronAPI) {
-      // Save null if disabled to clear the config
-      await window.electronAPI.invoke('sync:set-config', config.enabled ? config : null);
-    }
+    if (typeof window === 'undefined' || !window.electronAPI) return;
+    // Re-read at fire time instead of persisting the value captured when this
+    // was scheduled. Other write paths (the mobile project multi-select) update
+    // syncConfigAtom directly inside the debounce window; persisting a stale
+    // snapshot would erase their changes on main while the UI still shows them.
+    const latest = store.get(syncConfigAtom);
+    // Save null if disabled to clear the config
+    await window.electronAPI.invoke('sync:set-config', latest.enabled ? latest : null);
   }, SYNC_PERSIST_DEBOUNCE_MS);
 }
 
@@ -860,7 +864,7 @@ export const setSyncConfigAtom = atom(
     const current = get(syncConfigAtom);
     const newConfig = { ...current, ...updates };
     set(syncConfigAtom, newConfig);
-    scheduleSyncPersist(newConfig);
+    scheduleSyncPersist();
   }
 );
 
