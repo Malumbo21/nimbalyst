@@ -37,6 +37,7 @@ import { useCollabSyncCurtain } from '../../hooks/useCollabSyncCurtain';
 import { useMarkTrackerViewed } from '../../hooks/useTrackerUnread';
 import { useRecordTrackerOpened } from '../../hooks/useRecordTrackerOpened';
 import { reconcileExternalFieldChanges } from './trackerDetailFieldSync';
+import { sanitizeTitleInput, useAutoSizedTitle } from './trackerTitleAutoSize';
 import { invokeTrackerCommentMutation } from './trackerCommentMutation';
 import { formatTrackerActivity } from './trackerActivityPresentation';
 
@@ -446,6 +447,8 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
 
   // Local state for text fields (debounced save)
   const [localTitle, setLocalTitle] = useState(item ? getRecordTitle(item) : '');
+  // Title is a textarea so long titles wrap; it grows with its content (NIM-1615).
+  const titleRef = useAutoSizedTitle(localTitle);
   const [localDescription, setLocalDescription] = useState(item ? (item.fields.description as string ?? '') : '');
   const [localCustomFields, setLocalCustomFields] = useState<Record<string, any>>({});
   // Per-field debounce timers (not one shared timer) so editing one field never
@@ -1170,17 +1173,25 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
         </span>
         <div className="flex-1 min-w-0">
           {editable ? (
-            <input
-              type="text"
+            <textarea
+              ref={titleRef}
+              rows={1}
               value={localTitle}
-              onChange={(e) => handleTextFieldChange('title', e.target.value)}
-              onKeyDown={(e) => e.stopPropagation()}
-              className="w-full bg-transparent border-none outline-none text-base font-semibold text-nim placeholder:text-nim-faint p-0"
+              onChange={(e) => handleTextFieldChange('title', sanitizeTitleInput(e.target.value))}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                // Titles stay single-line: Enter commits instead of adding a row.
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              className="w-full bg-transparent border-none outline-none text-base font-semibold text-nim placeholder:text-nim-faint p-0 m-0 resize-none overflow-hidden leading-snug break-words"
               placeholder="Item title..."
               data-testid="tracker-detail-title"
             />
           ) : (
-            <h3 className="text-base font-semibold text-nim m-0 leading-snug">{getRecordTitle(item)}</h3>
+            <h3 className="text-base font-semibold text-nim m-0 leading-snug break-words">{getRecordTitle(item)}</h3>
           )}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span
