@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 <!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.70.4] - 2026-07-23
+
+
+### Added
+<!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
 - Quick Open now puts Memory search at the end with clear Docs, Trackers, and Sessions scopes while keeping exact tracker lookup and file-content search distinct.
 
 ### Fixed
@@ -20,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Embedded files and tracker references now survive copy, paste, and shared-document serialization without degrading or emptying the document.
 - Stopping a Codex agent session now reliably cancels it instead of bouncing back to "running".
 - SQLite databases open in the browser again instead of failing while loading the database engine.
+- Shared documents open reliably for accounts with legacy shares; the migration now runs in the background with status and retry controls.
+- Pull request rows now show the time of the latest real activity instead of a misleading timestamp.
 
 ### Removed
 <!-- Removed features go here -->
