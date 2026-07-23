@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- The onboarding survey now offers more discovery sources and asks what users searched for when they choose Search.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
