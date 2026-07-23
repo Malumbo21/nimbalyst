@@ -427,6 +427,20 @@ describe('queued-action approval messaging (countdown accuracy)', () => {
     expect(instructions).toContain('[INTERACTIVE PROMPT: ...]');
   });
 
+  it('instructs commit proposal prompts to read only the title and use the full approval phrasing', () => {
+    const client = makeClient('gpt-realtime-2');
+    const sent = attachFakeSocket(client);
+
+    (client as any).updateSession();
+
+    const update = sent.find((e) => e.type === 'session.update');
+    const instructions: string = update.session.instructions;
+    expect(instructions).toContain('Commit proposal: <commit title>. Say approve to commit or reject to cancel.');
+    expect(instructions).toContain('only the first line of the commit message');
+    expect(instructions).toContain('Never read file paths, the file list, code');
+    expect(instructions).toContain('Do not shorten this to "Approve, or reject?"');
+  });
+
   it('the queued submit_agent_prompt result reflects the countdown, not an approval gate', async () => {
     const client = makeClient('gpt-realtime'); // fallback model returns a synthetic queued result
     client.setOnSubmitPrompt(vi.fn(async () => {}));

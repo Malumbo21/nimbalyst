@@ -38,6 +38,7 @@ import {
 } from '../atoms/voiceModeState';
 import { voiceModeSettingsAtom, type VoiceModeSettings } from '../atoms/appSettings';
 import { VoiceListenWindowController } from './voiceListenWindow';
+import { formatGitCommitProposalForVoice } from './voiceInteractivePrompt';
 import { activeSessionIdAtom, sessionRegistryAtom, sessionHasPendingInteractivePromptAtom, sessionPendingPromptsAtom, respondToPromptAtom, refreshSessionListAtom, reloadSessionDataAtom } from '../atoms/sessions';
 import { windowModeAtom } from '../atoms/windowMode';
 
@@ -346,16 +347,7 @@ function formatPromptForVoice(prompt: { promptType: string; promptId: string; da
   }
 
   if (prompt.promptType === 'git_commit_proposal_request') {
-    // Multi-line commit messages are too long for voice -- read the title only.
-    // Body paragraphs (after the first blank line) belong in the widget, not aloud.
-    const fullMessage: string = prompt.data?.commitMessage || '';
-    const titleLine = fullMessage.split('\n')[0]?.trim() || '';
-    const files = Array.isArray(prompt.data?.filesToStage) ? prompt.data.filesToStage : [];
-    const fileCount = files.length;
-    const fileSummary = fileCount === 0
-      ? ''
-      : ` Across ${fileCount} file${fileCount === 1 ? '' : 's'}.`;
-    return `Commit proposal:${fileSummary} Commit message: "${titleLine}". Say "approve" to commit or "reject" to cancel.`;
+    return formatGitCommitProposalForVoice(prompt.data);
   }
 
   if (prompt.promptType === 'request_user_input_request') {
