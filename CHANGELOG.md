@@ -10,10 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+
+### Changed
+<!-- Changes to existing functionality go here -->
+
+### Fixed
+<!-- Bug fixes go here -->
+
+### Removed
+<!-- Removed features go here -->
+
+## [0.70.3] - 2026-07-22
+
+
+### Added
+<!-- New features go here -->
 - Organizations now have their own management window with a switcher between them, and Account settings lists the organizations each signed-in account belongs to.
 - New agent sessions now include a contextual tip for launching background sessions from anywhere with Cmd+Shift+N without leaving the current view.
 - Extensions can contribute first-class Application or Project settings pages with per-repository context, and Memory now has its own Project settings page.
 - The AI Usage Report now shows built-in and extension tool usage over time and by project, with historical backfill and contextual tips for undiscovered tools.
+- Voice agents can use the current workspace's slash commands.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
@@ -31,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opening a shared tracker or document no longer crashes the editor with a lost-selection error.
 - Switching sessions no longer leaks event listeners, which could slow the window down and eventually crash it after days of uptime.
 - Right-clicking a file near the edge of the edited-files sidebar or the project picker now keeps the context menu on screen, and Escape closes it.
+- Voice-created sessions now keep the selected provider, receive follow-up instructions, and request explicit approval before committing.
+- Restored terminal history no longer flashes briefly before hiding.
 
 ### Removed
 <!-- Removed features go here -->
