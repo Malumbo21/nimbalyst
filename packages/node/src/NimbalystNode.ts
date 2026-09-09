@@ -23,7 +23,7 @@ import { registerClaudeCodeDeps } from './host/claudeCodeDeps.js';
 import { openDatabase } from './db/openDatabase.js';
 import { createNodeSessionStore } from './store/NodeSessionStore.js';
 import { createNodeAgentMessagesStore } from './store/NodeAgentMessagesStore.js';
-import type { LoadedConfig } from './config.js';
+import { requireExecutionPolicy, type LoadedConfig } from './config.js';
 
 registerNodeHostEnvironment();
 
@@ -57,6 +57,7 @@ export class NimbalystNode {
   ) {}
 
   static async open(config: LoadedConfig): Promise<NimbalystNode> {
+    const trust = requireExecutionPolicy(config);
     const { db } = openDatabase(config.resolvedDatabasePath, config.schemaDir);
 
     // Both repository facades are module-level singletons in the runtime. They
@@ -74,7 +75,8 @@ export class NimbalystNode {
 
     registerClaudeCodeDeps({
       claudeCodePath: config.claudeCodePath,
-      trustMode: config.trust?.mode ?? 'bypass-all',
+      trustMode: trust.mode,
+      mcpServers: config.mcpServers,
     });
 
     return new NimbalystNode(db, sessions, sessionStore, config);

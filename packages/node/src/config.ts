@@ -46,9 +46,12 @@ export interface NodeConfig {
    * to be stated up front rather than defaulted: without it every tool call
    * blocks on a permission prompt nobody will ever answer.
    */
-  trust?: {
-    mode: 'allow-all' | 'bypass-all' | 'ask';
+  trust: {
+    mode: 'bypass-all';
   };
+
+  /** Explicit MCP connections. Repository and user MCP/settings discovery is disabled. */
+  mcpServers?: Record<string, unknown>;
 }
 
 export interface LoadedConfig extends NodeConfig {
@@ -60,6 +63,14 @@ export interface LoadedConfig extends NodeConfig {
 
 function fail(message: string): never {
   throw new Error(`[nimbalyst-node] ${message}`);
+}
+
+/** Validate before opening a database or registering provider dependencies. */
+export function requireExecutionPolicy(config: Partial<NodeConfig>): NodeConfig['trust'] {
+  if (config.trust?.mode !== 'bypass-all') {
+    fail('trust.mode must explicitly be "bypass-all". This grants host-user access; --workspace is not filesystem isolation. "ask" and "allow-all" require an interactive permission responder and are unsupported.');
+  }
+  return config.trust;
 }
 
 export function loadConfig(configPath: string): LoadedConfig {
@@ -93,10 +104,15 @@ export function loadConfig(configPath: string): LoadedConfig {
   }
 
   const configDir = path.dirname(absoluteConfigPath);
+  const trust = requireExecutionPolicy(config);
+  if (config.mcpServers !== undefined && (!config.mcpServers || typeof config.mcpServers !== 'object' || Array.isArray(config.mcpServers))) {
+    fail('mcpServers must be an object of explicitly provisioned connections');
+  }
 
   return {
     ...config,
     databasePath: config.databasePath,
+    trust,
     resolvedDatabasePath: path.resolve(configDir, config.databasePath),
     schemaDir: config.schemaDir ? path.resolve(configDir, config.schemaDir) : undefined,
     configPath: absoluteConfigPath,

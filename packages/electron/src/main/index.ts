@@ -142,7 +142,7 @@ import { registerExportHandlers } from './ipc/ExportHandlers';
 import { registerSemanticSearchHandlers } from './ipc/SemanticSearchHandlers';
 import { SemanticCatalogService } from './services/SemanticCatalogService';
 import { registerShareHandlers } from './ipc/ShareHandlers';
-import { MCPConfigService } from './services/MCPConfigService';
+import { MCPConfigService, loadTrustGatedMcpServers } from './services/MCPConfigService';
 import { compressImage, shouldCompress } from './services/ImageCompressor';
 import { setMcpConfigServiceGetter } from './mcpConfigServiceRef';
 import { ClaudeCliLauncherConfig } from './services/ai/claudeCliLauncherSingleton';
@@ -2332,22 +2332,25 @@ app.whenReady().then(async () => {
         workspacePath?: string,
     ): Promise<Record<string, any>> => {
         if (!mcpConfigService) {
-            throw new Error('MCP config service not initialized');
+            // Never throw from here: the runtime's config service treats a
+            // throwing loader as permission to load `<workspace>/.mcp.json`
+            // itself, without the trust gate below.
+            logger.mcp.warn(`[MCP] MCP config service not initialized; ${displayName} gets no servers`);
+            return {};
         }
-        const mergedConfig = await mcpConfigService.getMergedConfig(workspacePath);
-        const enabledServers: Record<string, any> = {};
-        for (const [name, config] of Object.entries(mergedConfig.mcpServers || {})) {
-            if (!isMCPServerEnabledForProvider(config as MCPServerConfig, providerId)) continue;
-            const isAuthorized = await mcpConfigService.isOAuthAuthorized(config as MCPServerConfig, {
-                useMcpRemoteForNativeOAuth: true,
-            });
-            if (!isAuthorized) {
-                logger.mcp.info(`[MCP] Skipping unauthorized OAuth server for ${displayName}: ${name}`);
-                continue;
-            }
-            enabledServers[name] = mcpConfigService.processServerConfigForRuntime(config as any);
-        }
-        return enabledServers;
+        // The trust read is passed as a thunk so it runs inside the loader's
+        // fail-closed catch: a throw out of the permission store here would
+        // otherwise reach the runtime's ungated fallback loader.
+        // getPermissionMode resolves worktrees to the project that owns trust,
+        // matching the path the turn's own permission check uses.
+        return loadTrustGatedMcpServers({
+            service: mcpConfigService,
+            providerId,
+            displayName,
+            workspacePath,
+            getTrustMode: () =>
+                workspacePath ? getPermissionService().getPermissionMode(workspacePath) : null,
+        });
     };
 
     CopilotCLIProvider.setMCPConfigLoader(async (workspacePath?: string) => {
@@ -2377,8 +2380,9 @@ app.whenReady().then(async () => {
     // list or a session/new payload. So its loader writes the filtered set to
     // disk before returning it -- the returned value still feeds the provider's
     // mcpServerCount, but the file is what the CLI acts on. Only
-    // `nimbalyst:`-prefixed entries are touched; see
-    // HeadlessAgentMcpConfigService.
+    // `nimbalyst:`-prefixed entries are touched, and any server carrying a
+    // resolved credential is withheld rather than written into the user's
+    // repository; see HeadlessAgentMcpConfigService.
     const syncHeadlessAgentMcpConfig = async (
         target: HeadlessAgentMcpTarget,
         providerId: MCPProviderId,
@@ -2387,9 +2391,18 @@ app.whenReady().then(async () => {
     ): Promise<Record<string, any>> => {
         const servers = await loadEnabledMcpServersFor(providerId, displayName, workspacePath);
         try {
-            const written = await headlessAgentMcpConfigService.sync(target, servers, workspacePath);
+            const { path: written, cleanedWorkspacePath } = await headlessAgentMcpConfigService.sync(
+                target,
+                servers,
+                workspacePath,
+            );
             if (written) {
                 logger.mcp.info(`[MCP] Wrote ${Object.keys(servers).length} server(s) for ${displayName}: ${written}`);
+            }
+            if (cleanedWorkspacePath) {
+                logger.mcp.info(
+                    `[MCP] Removed Nimbalyst MCP entries an earlier version wrote inside the workspace: ${cleanedWorkspacePath}`,
+                );
             }
         } catch (error) {
             // A turn with no MCP servers is far better than a turn that cannot

@@ -244,6 +244,7 @@ export async function buildSdkOptions(
   const effectivePath = customPath || resolvedBinaryPath;
   // console.log(`[CLAUDE-CODE] Binary path: custom=${customPath || '(none)'} resolved=${resolvedBinaryPath ?? '(none)'} effective=${effectivePath ?? '(none)'}`);
   const resolvedModel = resolveModelVariant();
+  const explicitOnly = getHostEnvironment().agentConfiguration === 'explicit-only';
 
   const options: ClaudeAgentSdkOptions = {
     pathToClaudeCodeExecutable: effectivePath,
@@ -259,7 +260,9 @@ export async function buildSdkOptions(
           preset: 'claude_code',
           append: systemPrompt
         },
-    settingSources,
+    settingSources: explicitOnly ? [] : settingSources,
+    // Headless provisioned servers must not be merged with repository or user discovery.
+    ...(explicitOnly ? { strictMcpConfig: true } : {}),
     // NIM-1988: this is the provider-owned, first-build snapshot, not a live
     // config read. The SDK rebuilds the API tool prefix on resumed turns, so a
     // server appearing/disappearing here would force a tools_changed miss over
@@ -316,6 +319,14 @@ export async function buildSdkOptions(
     },
   };
 
+  if (explicitOnly) {
+    // These channels are separate from filesystem settings. Assign through the
+    // SDK Options type so incompatible SDK changes are caught at compilation.
+    options.skills = [];
+    options.agents = {};
+    options.plugins = [];
+  }
+
   if (config.thinkingMode === 'disabled') {
     if (canDisableThinkingForModel(resolvedModel)) {
       options.thinking = { type: 'disabled' as const };
@@ -336,7 +347,7 @@ export async function buildSdkOptions(
   teammateManager.lastUsedPermissionsPath = permissionsPath;
 
   // Load extension plugins
-  if (ClaudeCodeDeps.extensionPluginsLoader) {
+  if (!explicitOnly && ClaudeCodeDeps.extensionPluginsLoader) {
     try {
       const extensionPlugins = await ClaudeCodeDeps.extensionPluginsLoader(workspacePath);
       if (extensionPlugins.length > 0) {
@@ -371,9 +382,21 @@ export async function buildSdkOptions(
   // the Claude native binary treats the mere presence of that variable as an
   // API-key auth signal, which can shadow a valid OAuth/CLI login and produce
   // "Authentication failed" even though accountInfo() succeeds in settings.
-  const { ANTHROPIC_API_KEY: _envAnthropicKey, OPENAI_API_KEY: _envOpenaiKey, ...sanitizedProcessEnv } = process.env;
-  const { ANTHROPIC_API_KEY: _shellAnthropicKey, OPENAI_API_KEY: _shellOpenaiKey, ...sanitizedShellEnv } = shellEnv;
-  const { ANTHROPIC_API_KEY: _settingsAnthropicKey, OPENAI_API_KEY: _settingsOpenaiKey, ...sanitizedSettingsEnv } = settingsEnv;
+  // Preserve only OS/runtime locations for a headless child. Repository MCP,
+  // hooks, endpoint overrides and unrelated host credentials are not inputs.
+  const platformKeys = new Set([
+    'PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT',
+    'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL',
+    'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+    'APPDATA', 'LOCALAPPDATA', 'SYSTEMDRIVE', 'HOMEDRIVE', 'HOMEPATH',
+    'PROGRAMFILES', 'PROGRAMFILES(X86)', 'NUMBER_OF_PROCESSORS', 'OS',
+  ]);
+  const inheritedEnv = explicitOnly
+    ? Object.fromEntries(Object.entries(process.env).filter(([key]) => platformKeys.has(key.toUpperCase())))
+    : process.env;
+  const { ANTHROPIC_API_KEY: _envAnthropicKey, OPENAI_API_KEY: _envOpenaiKey, ...sanitizedProcessEnv } = inheritedEnv;
+  const { ANTHROPIC_API_KEY: _shellAnthropicKey, OPENAI_API_KEY: _shellOpenaiKey, ...sanitizedShellEnv } = explicitOnly ? {} : shellEnv;
+  const { ANTHROPIC_API_KEY: _settingsAnthropicKey, OPENAI_API_KEY: _settingsOpenaiKey, ...sanitizedSettingsEnv } = explicitOnly ? {} : settingsEnv;
 
   const enableAgentTeams = sanitizedSettingsEnv.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS === '1';
   const env: any = managedClaudeEnvironment({
@@ -404,7 +427,7 @@ export async function buildSdkOptions(
     // usage; setting this to `cli` aligns Nimbalyst's classification with
     // the official CLI and removes that asymmetry. The user can still
     // override via their own env var if they want the original sdk-ts label.
-    ...(process.env.CLAUDE_CODE_ENTRYPOINT == null && { CLAUDE_CODE_ENTRYPOINT: 'cli' }),
+    ...(sanitizedProcessEnv.CLAUDE_CODE_ENTRYPOINT == null && { CLAUDE_CODE_ENTRYPOINT: 'cli' }),
     // The Claude CLI currently defaults to xhigh when this variable is absent.
     // Always forward a resolved Nimbalyst selection, including "high", so the
     // effort shown in the selector matches the request sent to the CLI.

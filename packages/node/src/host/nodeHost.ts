@@ -35,6 +35,7 @@ function packageRoot(): string {
 }
 
 export const nodeHostEnvironment: HostEnvironment = {
+  agentConfiguration: 'explicit-only',
   // No asar, ever. Every packaged-path branch in the runtime resolves nowhere
   // from here, so answering true would send binary resolution into a directory
   // that does not exist.

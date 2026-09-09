@@ -10,12 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
+- Settings > Application > Cloudflare Sandboxes: sign in with your local Wrangler profile, pick an account, and review, deploy, wake, stop or delete a private Nimbalyst sandbox in your own Cloudflare account. Deploying stays disabled until the sandbox container image is published.
 
 ### Changed
 <!-- Changes to existing functionality go here -->
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Cursor Agent no longer copies your global MCP server settings, including any secrets, into the project folder.
+- Repository-provided MCP servers no longer start for Grok Build or Cursor Agent in a workspace you have not trusted.
 - The macOS menu bar strip and the panel below it now agree on their status colors: running sessions are green, unread ones blue.
 
 ### Removed

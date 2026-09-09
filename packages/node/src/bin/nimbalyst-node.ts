@@ -26,8 +26,8 @@ interface Args {
 
 const USAGE = `nimbalyst-node --config <file> --workspace <dir> --prompt <text>
 
-  --config    <file>  Required. JSON config: databasePath, optional schemaDir,
-                      claudeCodePath, providerApiKeys, trust.
+  --config    <file>  Required. JSON config: databasePath and explicit trust.mode;
+                      optional schemaDir, claudeCodePath, providerApiKeys, mcpServers.
   --workspace <dir>   Required. Workspace the agent runs in (the SDK's cwd).
   --prompt    <text>  Required. The user turn to run.
   --session   <id>    Optional. Continue an existing session instead of a new one.

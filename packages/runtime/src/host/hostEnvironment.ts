@@ -18,6 +18,8 @@
  */
 
 export interface HostEnvironment {
+  /** Headless hosts accept only provisioned agent configuration, never repository hooks or ambient MCP discovery. */
+  agentConfiguration?: 'explicit-only';
   /**
    * True when running from a packaged application bundle whose resources live
    * inside an asar archive. A headless host answers false: there is no asar,

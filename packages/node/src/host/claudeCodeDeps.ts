@@ -9,12 +9,11 @@
  *
  * | Left null                      | Consequence, and why it is acceptable                    |
  * | ------------------------------ | -------------------------------------------------------- |
- * | `mcpConfigLoader`              | McpConfigService falls back to the workspace `.mcp.json`  |
  * | `mcpWithheldNamesLoader`       | Nothing is withheld; there is no OAuth check to report on |
  * | `extensionPluginsLoader`       | No extensions are installed in a headless node            |
- * | `claudeCodeSettingsLoader`     | Setting sources default to user+project+local             |
- * | `claudeSettingsEnvLoader`      | The CLI reads `~/.claude/settings.json` itself            |
- * | `shellEnvironmentLoader`       | A CLI already runs with the user's shell environment      |
+ * | `claudeCodeSettingsLoader`     | The explicit-only host disables filesystem settings       |
+ * | `claudeSettingsEnvLoader`      | Filesystem settings and implicit env expansion are disabled |
+ * | `shellEnvironmentLoader`       | Only OS/runtime environment locations reach the child     |
  * | `enhancedPathLoader`           | Same: PATH is inherited, not reconstructed from settings  |
  * | `gitContextLoader`             | The turn gets no frozen git snapshot (#1177 is a cache    |
  * |                                | optimization, not a correctness requirement)              |
@@ -39,7 +38,8 @@ export interface ClaudeCodeHostOptions {
    * nobody to ask: with no trust checker every tool call falls through to an
    * interactive prompt that will never be answered, and the turn hangs forever.
    */
-  trustMode: 'allow-all' | 'bypass-all' | 'ask';
+  trustMode: 'bypass-all';
+  mcpServers?: Record<string, unknown>;
   /** Where security-relevant decisions are written. Defaults to stderr. */
   logSecurity?: (message: string, data?: unknown) => void;
 }
@@ -50,10 +50,9 @@ export function registerClaudeCodeDeps(options: ClaudeCodeHostOptions): void {
   // over as an explicit custom path. A configured path always wins.
   const binaryPath = options.claudeCodePath ?? resolveClaudeBinary();
   ClaudeCodeProvider.setCustomClaudeCodePathLoader(binaryPath ? () => binaryPath : null);
+  ClaudeCodeProvider.setMCPConfigLoader(async () => options.mcpServers ?? {});
 
-  // `ask` is expressible so the flag is not a lie, but it is a dead end here:
-  // nothing in this process can render a prompt, so the turn will block. It is
-  // the config file's problem to not choose it.
+  // Configuration validation requires an explicit noninteractive execution policy.
   ClaudeCodeProvider.setTrustChecker(() => ({
     trusted: true,
     mode: options.trustMode,
