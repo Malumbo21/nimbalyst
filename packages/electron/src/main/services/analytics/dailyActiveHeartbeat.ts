@@ -109,23 +109,50 @@ export interface DailyActiveProperties {
   platform: string;
   days_since_install: string;
   local_date: string;
+  $set: {
+    nimbalyst_version: string;
+    cpu_arch: string;
+    last_session_at: string;
+    has_nimbalyst_session: true;
+  };
 }
 
 /**
  * The heartbeat's payload. Bucketed install age rather than a raw date, matching
  * `nimbalyst_session_start` — a precise install timestamp is close to a unique
  * key on a small cohort.
+ *
+ * The `$set` block is deliberate, not incidental. All four of those person
+ * properties rode on events the ingestion allow-list now drops or samples:
+ * `nimbalyst_version` and `cpu_arch` fell to ~10% because their only carrier was
+ * the sampled `nimbalyst_session_start` (so "what version is the fleet on"
+ * silently became a 12.5% estimate), and `last_session_at` /
+ * `has_nimbalyst_session` went to zero with the `$set` event on 2026-09-04.
+ *
+ * A once-a-day event is the right home for all four: they change slowly, "last
+ * session" at day granularity is what anyone actually asks for, and riding here
+ * costs nothing because the event already ships. Person properties are the part
+ * of the schema an event allow-list cannot describe, so they need a deliberate
+ * carrier rather than whichever event happened to be passing.
  */
 export function dailyActiveProperties(input: {
   version: string;
   platform: string;
+  cpuArch: string;
   daysSinceInstall: number;
   localDate: string;
+  nowIso: string;
 }): DailyActiveProperties {
   return {
     nimbalyst_version: input.version,
     platform: input.platform,
     days_since_install: bucketDaysSinceInstall(input.daysSinceInstall),
     local_date: input.localDate,
+    $set: {
+      nimbalyst_version: input.version,
+      cpu_arch: input.cpuArch,
+      last_session_at: input.nowIso,
+      has_nimbalyst_session: true,
+    },
   };
 }

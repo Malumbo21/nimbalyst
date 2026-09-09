@@ -440,7 +440,7 @@ The `known_error` event uses an `errorId` property to identify specific error co
 | `quit_confirmation_shown` | `index.ts:757` | User attempts quit with active AI session | `reason` (active_ai_session) | v0.45.25 (2025-11-14) |  |
 | `quit_confirmation_result` | `index.ts:774, 783` | User responds to quit confirmation dialog | `result` (quit_anyway/cancelled) | v0.45.25 (2025-11-14) |  |
 | `app_foregrounded` | `WindowHandlers.ts:172` | Any window gains focus (throttled to once per 30 minutes). Used for DAU tracking - counts users who actively bring Nimbalyst to the foreground, not those who leave it running in the background. | None | (pending release) |  |
-| `daily_active` | `dailyActiveHeartbeat.ts`<br/>`AnalyticsService.ts`<br/>`WindowHandlers.ts` | **The DAU metric.** At most once per install per *local* calendar day, on window focus or on a 10-minute tick while a window is focused. Deduped against a persisted local date, so a restart mid-day does not re-emit. | `nimbalyst_version`<br/>`platform`<br/>`days_since_install` (0/1/2-7/8-30/31-90/90+)<br/>`local_date`<br/>`release_channel`<br/>`build_type` | (pending release) |  |
+| `daily_active` | `dailyActiveHeartbeat.ts`<br/>`AnalyticsService.ts`<br/>`WindowHandlers.ts` | **The DAU metric.** At most once per install per *local* calendar day, on window focus or on a 10-minute tick while a window is focused. Deduped against a persisted local date, so a restart mid-day does not re-emit. | `nimbalyst_version`<br/>`platform`<br/>`days_since_install` (0/1/2-7/8-30/31-90/90+)<br/>`local_date`<br/>`release_channel`<br/>`build_type`<br/>`$set: nimbalyst_version`<br/>`$set: cpu_arch`<br/>`$set: last_session_at`<br/>`$set: has_nimbalyst_session` | (pending release) |  |
 
 #### Counting daily active users
 
@@ -573,6 +573,22 @@ Two further behaviours worth knowing:
 
 - **High-volume events are sampled onto a 12.5% distinct-id panel**, not dropped. The panel is `sha256Hex(distinct_id)` first hex character in `['0','1']`, so the *same* users are kept across every sampled event and per-user rates stay exact — but absolute totals must be multiplied by 8. See `SAMPLED_EVENTS` in the mirror file for the current list.
 - **Transformations run before person resolution**, so they cannot read person properties such as `is_dev_user`. Any future filter on dev traffic has to put the flag on the event payload itself.
+- **`$set` is kept conditionally, on its payload rather than its name.** The event is ~19,000/day in full and stays dropped, but **person properties ride on it**, so blanket-dropping the name silently zeroed several of them on 2026-09-04. Signup email went unnoticed for five days, until the PM asked why there were no signups. The transformation keeps a `$set` carrying any of `email`, `user_role`, `referral_source`, `referral_search_detail`, `has_ios_signin` — ~320/day, under 2% of the event's volume. See `INGESTED_CONDITIONALLY` in the mirror.
+
+#### Person properties are invisible to an event allow-list
+
+This is the trap the allow-list cannot warn you about: person properties arrive as `$set` payloads, not as their own named events, so no amount of reading the event-name list reveals them. What the 2026-09-04 cut actually cost, measured Aug 31–Sep 3 against Sep 5–8:
+
+| Property | Retained | Now carried by |
+| --- | --- | --- |
+| `email`, `user_role`, `referral_source`, `referral_search_detail`, `has_ios_signin` | 0% | conditional `$set` rule (restored 2026-09-09) |
+| `nimbalyst_version`, `cpu_arch` | ~10% — only carrier was the **sampled** `nimbalyst_session_start`, so fleet version became a 12.5% estimate | `daily_active` `$set` |
+| `last_session_at`, `has_nimbalyst_session` | 0% | `daily_active` `$set` |
+| `session_count`, `has_opened_markdown`, `has_opened_visual_editor`, `has_tracker_activity` | 0% | **still dropped** — ~22,000/day of per-action counters; no owner has asked for them back |
+
+The `utm_*` and ad-click keys (`gclid`, `fbclid`, `msclkid`, …) *look* like they were lost too — 3,530 people to 6 — but every value was empty before the cut as well. The desktop app's `$pageview` has no marketing URL, so those keys were always null placeholders. Nothing was lost there.
+
+**Before dropping any event wholesale, check what rides on it.** A name can be almost worthless by volume and still be the sole carrier of something the business counts on.
 
 If an event you expected is missing, check the transformation before you debug the client.
 

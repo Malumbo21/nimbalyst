@@ -117,19 +117,37 @@ describe('hasFocusedWindow', () => {
 });
 
 describe('dailyActiveProperties', () => {
-  it('buckets install age instead of carrying a precise install date', () => {
-    const props = dailyActiveProperties({
+  const props = () =>
+    dailyActiveProperties({
       version: '0.33.1',
       platform: 'darwin',
+      cpuArch: 'arm64',
       daysSinceInstall: 45,
       localDate: '2026-09-09',
+      nowIso: '2026-09-09T14:30:00.000Z',
     });
 
-    expect(props).toEqual({
+  it('buckets install age instead of carrying a precise install date', () => {
+    expect(props()).toMatchObject({
       nimbalyst_version: '0.33.1',
       platform: 'darwin',
       days_since_install: '31-90',
       local_date: '2026-09-09',
+    });
+  });
+
+  /**
+   * These four have no other surviving carrier: version and arch were only on
+   * the sampled session-start event, and the other two died with `$set`. If the
+   * `$set` block is dropped from the payload they silently decay again, with no
+   * failure anywhere to notice it.
+   */
+  it('carries the person properties that lost their original carrier', () => {
+    expect(props().$set).toEqual({
+      nimbalyst_version: '0.33.1',
+      cpu_arch: 'arm64',
+      last_session_at: '2026-09-09T14:30:00.000Z',
+      has_nimbalyst_session: true,
     });
   });
 });

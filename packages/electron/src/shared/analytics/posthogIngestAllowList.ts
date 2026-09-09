@@ -90,6 +90,55 @@ export const INGESTED_SAMPLED = [
 export const PANEL_BUCKETS = ['0', '1'] as const;
 
 /**
+ * Ingested only when the PAYLOAD matches a condition, not on the name alone.
+ *
+ * `$set` in full is ~19,000/day -- the single largest event in the project --
+ * and stays dropped. But PERSON PROPERTIES ride on it, and dropping the name
+ * silently zeroed several of them on 2026-09-04. Signup email went unnoticed
+ * for five days, until the PM asked why there were no signups.
+ *
+ * The transformation now keeps a `$set` whose `$set`/`$set_once` payload carries
+ * any of these low-volume, high-value keys (~320/day, under 2% of the event's
+ * volume), across `posthog-ios`, `posthog-android` and desktop `posthog-js`:
+ *
+ *   email, user_role, referral_source, referral_search_detail, has_ios_signin
+ *
+ * The expensive per-action counters stay dropped -- session_count,
+ * last_session_at, has_opened_markdown, has_opened_visual_editor,
+ * has_tracker_activity, ~22,000/day between them. The ones worth keeping moved
+ * onto the once-a-day `daily_active` payload instead; see its `$set` block in
+ * `main/services/analytics/dailyActiveHeartbeat.ts`.
+ *
+ * The general lesson, which is why this exists as its own list rather than a
+ * comment on the dropped one: an event name can be almost worthless by volume
+ * and still be the sole carrier of something the business counts on. A person
+ * property is invisible in any list of EVENT names, so it cannot be audited by
+ * reading this file. Check what rides on a name before dropping it wholesale.
+ */
+export const INGESTED_CONDITIONALLY = [
+  '$set',
+] as const;
+
+/**
+ * The person-property keys that make a `$set` worth ingesting. MUST match the
+ * key list in the transformation exactly -- it tests for these names and drops
+ * the event when none are present.
+ *
+ * This is the fragile seam. The transformation matches on the NAME of a key it
+ * has no way to validate, so renaming `email` in the code that produces it
+ * silently stops signup collection with no error anywhere. That is precisely
+ * how five days of signups were lost. `onboardingAnalytics.test.ts` pins the
+ * producer's output against this list so a rename fails the build instead.
+ */
+export const KEPT_PERSON_PROPERTIES = [
+  'email',
+  'user_role',
+  'referral_source',
+  'referral_search_detail',
+  'has_ios_signin',
+] as const;
+
+/**
  * Emitted by the PostHog SDKs themselves rather than by our code, so they
  * never appear at a call site in this repo. Listed here so the gate does not
  * report them as a stale allow-list entry.
@@ -114,7 +163,6 @@ export const SDK_OWNED = [
  * here burning client CPU to produce something nobody receives.
  */
 export const INTENTIONALLY_DROPPED = [
-  '$set',
   'account_deletion_completed',
   'account_deletion_confirmed',
   'account_deletion_failed',

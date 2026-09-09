@@ -105,9 +105,18 @@ function schemaMapEvents() {
   return found;
 }
 
-/** Parse a `const NAME = [...]` string-array out of the allow-list module. */
+/**
+ * Parse an `export const NAME = [...]` string-array out of the allow-list module.
+ *
+ * Anchored on `export const` deliberately. Unanchored, the first mention of a
+ * list's name ANYWHERE in the file wins -- including inside a doc comment on a
+ * different list -- and `[^=]*=` then runs on to the next declaration, so the
+ * parser silently returns some other list's contents. One sentence of prose
+ * naming a sibling list was enough to make INTENTIONALLY_DROPPED parse as a
+ * one-element array and report ~180 correctly-classified events as unclassified.
+ */
 export function parseList(src, name) {
-  const m = src.match(new RegExp(`${name}[^=]*=\\s*\\[([\\s\\S]*?)\\]`));
+  const m = src.match(new RegExp(`export const ${name}[^=]*=\\s*\\[([\\s\\S]*?)\\]`));
   if (!m) throw new Error(`Could not parse ${name} from ${ALLOW_LIST_FILE}`);
   return new Set([...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
 }
@@ -130,19 +139,19 @@ export function collectEventNames() {
 
 /**
  * Pure classification step: returns one message per problem, empty when clean.
- * `found` is a Map of name -> where; `lists` holds the four Sets.
+ * `found` is a Map of name -> where; `lists` holds the five Sets.
  */
 export function findClassificationErrors(found, lists) {
-  const { always, sampled, dropped, sdkOwned } = lists;
+  const { always, sampled, conditional, dropped, sdkOwned } = lists;
   const errors = [];
 
   for (const [name, where] of [...found].sort()) {
-    const count = [always, sampled, dropped, sdkOwned].filter((s) => s.has(name)).length;
+    const count = [always, sampled, conditional, dropped, sdkOwned].filter((s) => s.has(name)).length;
     if (count === 0) {
       errors.push(
         `  ${name}\n    first seen: ${where}\n` +
-          `    -> Not classified. Add it to INGESTED_ALWAYS, INGESTED_SAMPLED or\n` +
-          `       INTENTIONALLY_DROPPED in ${ALLOW_LIST_FILE}.\n` +
+          `    -> Not classified. Add it to INGESTED_ALWAYS, INGESTED_SAMPLED,\n` +
+          `       INGESTED_CONDITIONALLY or INTENTIONALLY_DROPPED in ${ALLOW_LIST_FILE}.\n` +
           `       If you want the data, you must ALSO add the name to the\n` +
           `       'Cost control allow-list' transformation in PostHog project 234047,\n` +
           `       or it will be silently dropped at ingestion.`,
@@ -171,6 +180,7 @@ export function readLists() {
   return {
     always: parseList(src, 'INGESTED_ALWAYS'),
     sampled: parseList(src, 'INGESTED_SAMPLED'),
+    conditional: parseList(src, 'INGESTED_CONDITIONALLY'),
     dropped: parseList(src, 'INTENTIONALLY_DROPPED'),
     sdkOwned: parseList(src, 'SDK_OWNED'),
   };

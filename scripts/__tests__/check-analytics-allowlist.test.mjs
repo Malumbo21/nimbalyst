@@ -4,12 +4,19 @@ import { test } from 'node:test';
 import {
   collectEventNames,
   findClassificationErrors,
+  parseList,
   readLists,
 } from '../check-analytics-allowlist.mjs';
 
 const lists = () => {
   const l = readLists();
-  return { always: new Set(l.always), sampled: new Set(l.sampled), dropped: new Set(l.dropped), sdkOwned: new Set(l.sdkOwned) };
+  return {
+    always: new Set(l.always),
+    sampled: new Set(l.sampled),
+    conditional: new Set(l.conditional),
+    dropped: new Set(l.dropped),
+    sdkOwned: new Set(l.sdkOwned),
+  };
 };
 
 test('every event name in source is classified', () => {
@@ -72,6 +79,29 @@ test('the DAU heartbeat is never sampled', () => {
   const { always, sampled } = readLists();
   assert.ok(always.has('daily_active'));
   assert.ok(!sampled.has('daily_active'));
+});
+
+/**
+ * A doc comment on one list that names a sibling list used to hijack the parse:
+ * the unanchored regex matched the prose, ran `[^=]*=` on to the next
+ * declaration, and returned that array instead. INTENTIONALLY_DROPPED came back
+ * with one element and ~180 correctly-classified events were reported broken.
+ */
+test('a list name mentioned in a comment does not hijack the parse', () => {
+  const src = [
+    '/** Unlike INTENTIONALLY_DROPPED, these are kept on a condition. */',
+    "export const INGESTED_CONDITIONALLY = ['$set'] as const;",
+    "export const INTENTIONALLY_DROPPED = ['alpha', 'beta'] as const;",
+  ].join('\n');
+
+  assert.deepEqual([...parseList(src, 'INTENTIONALLY_DROPPED')], ['alpha', 'beta']);
+  assert.deepEqual([...parseList(src, 'INGESTED_CONDITIONALLY')], ['$set']);
+});
+
+test('$set is conditional, not dropped, because the signup email rides on it', () => {
+  const { conditional, dropped } = readLists();
+  assert.ok(conditional.has('$set'), '$set is kept when it carries an email');
+  assert.ok(!dropped.has('$set'));
 });
 
 test('the sampled panel is documented as a fraction that must be scaled', () => {

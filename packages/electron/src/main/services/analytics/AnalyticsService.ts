@@ -300,8 +300,10 @@ export class AnalyticsService {
         ...dailyActiveProperties({
           version: app.getVersion(),
           platform: process.platform,
+          cpuArch: process.arch,
           daysSinceInstall,
           localDate: decision.localDate,
+          nowIso: now.toISOString(),
         }),
         ...this.releaseAttribution(),
       },
