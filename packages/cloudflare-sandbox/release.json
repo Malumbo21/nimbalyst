@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
   "sdkVersion": "0.12.9",
-  "image": null
+  "image": "docker.io/nimbalyst/sandbox-node@sha256:b7a9918dd97096e469894fd98abac106e333c49cd4a1d1cdf991f98f26dcfe18"
 }

@@ -21,17 +21,32 @@ test('private control uses explicit config, confirms stop, and disposes after RP
     const createProxy = async options => {
       opened++;
       assert.deepEqual(options, { configPath, persist: false, envFiles: [], remoteBindings: true });
+      // With remote bindings, Wrangler returns RPC results as Miniflare stubs
+      // that are poisoned once the proxy is disposed. Model that: any property
+      // read after dispose throws, exactly as the real stub does.
+      let poisoned = false;
+      const stub = data => new Proxy(data, {
+        get(target, key) {
+          if (poisoned) throw new Error('Attempted to use poisoned stub.');
+          return target[key];
+        },
+        ownKeys(target) {
+          if (poisoned) throw new Error('Attempted to use poisoned stub.');
+          return Reflect.ownKeys(target);
+        },
+      });
       return {
         env: { Manager: {
-          status: async () => ({ state: 'stopped' }),
+          status: async () => stub({ state: 'stopped', lastChangedAt: 1 }),
           stop: async request => { calls.push(request); throw new Error('RPC failed'); },
         } },
-        dispose: async () => { disposed++; },
+        dispose: async () => { disposed++; poisoned = true; },
       };
     };
     await assert.rejects(runManagerRPC({ configPath, operation: 'stop' }, createProxy), /confirmation/);
     assert.equal(opened, 0);
-    assert.deepEqual(await runManagerRPC({ configPath, operation: 'status' }, createProxy), { state: 'stopped' });
+    // deepEqual reads the fields after the helper has disposed the proxy.
+    assert.deepEqual(await runManagerRPC({ configPath, operation: 'status' }, createProxy), { state: 'stopped', lastChangedAt: 1 });
     await assert.rejects(runManagerRPC({ configPath, operation: 'stop', discardEphemeralData: true }, createProxy), /RPC failed/);
     assert.deepEqual(calls, [{ discardEphemeralData: true }]);
     assert.equal(disposed, 2);

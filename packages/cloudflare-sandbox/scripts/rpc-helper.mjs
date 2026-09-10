@@ -57,9 +57,13 @@ export async function runManagerRPC(request, createProxy) {
   const proxy = await createProxy({ configPath: request.configPath, persist: false, envFiles: [], remoteBindings: true });
   try {
     const manager = proxy.env.Manager;
-    return request.operation === 'stop'
+    const result = request.operation === 'stop'
       ? await manager.stop({ discardEphemeralData: true })
       : await manager[request.operation]();
+    // With remote bindings the result is a Miniflare stub, and dispose() below
+    // poisons every stub. Copy the fields out while they can still be read;
+    // returning the stub itself made every successful RPC look unreachable.
+    return JSON.parse(JSON.stringify(result));
   } finally {
     await proxy.dispose();
   }
