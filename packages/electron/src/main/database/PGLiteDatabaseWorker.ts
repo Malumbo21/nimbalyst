@@ -13,6 +13,7 @@ import { AnalyticsService } from '../services/analytics/AnalyticsService';
 import type { SQLiteDatabase } from './sqlite/SQLiteDatabase';
 import { DatabaseBackupService } from '../services/database/DatabaseBackupService';
 import { WorkerRequestTracker } from './WorkerRequestTracker';
+import { assertDatabaseAvailable } from './databaseMaintenance';
 import { MigrationSourceReader } from './sqlite/migrationSourceRead';
 import { resolveDatabaseUserDataPath } from './userDataPath';
 import {
@@ -743,6 +744,7 @@ export class PGLiteDatabaseWorker {
    * @param timeoutMs - Timeout in milliseconds (default: 30000)
    */
   private sendMessage(type: string, payload?: any, timeoutMs: number | null = 30000): Promise<any> {
+    if (type !== 'close' && type !== 'verifyBackup') assertDatabaseAvailable();
     return this.requests.send(type, payload, timeoutMs);
   }
 

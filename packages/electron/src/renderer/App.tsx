@@ -144,6 +144,7 @@ import { initPermissionListeners } from './store/listeners/permissionListeners';
 import { initSoundListeners } from './store/listeners/soundListeners';
 import { initStytchAuthListeners } from './store/listeners/stytchAuthListeners';
 import { initSyncListeners } from './store/listeners/syncListeners';
+import { DatabaseMaintenanceNotice } from './components/DatabaseMaintenanceNotice';
 import { initDbMigrationListeners } from './store/listeners/dbMigrationListeners';
 import { initOpenAICodexAuthListeners } from './store/listeners/openAICodexAuthListeners';
 import { initThemeListener } from './store/listeners/themeListeners';
@@ -2786,6 +2787,7 @@ export default function App() {
 
   return (
     <DialogProvider workspacePath={workspacePath || undefined}>
+    <DatabaseMaintenanceNotice />
     {/* Navigation dialog keyboard shortcuts - must be inside DialogProvider */}
     <NavigationDialogKeyboardHandler
       workspaceMode={workspaceMode}

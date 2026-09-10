@@ -26,11 +26,13 @@
  */
 
 import { serializeBridgeError } from './worker/migrationReadBridge';
+import type { CutoverVerification } from './cutoverVerification';
 import { Worker } from 'worker_threads';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { getDatabaseMaintenanceSettings } from '../../utils/store';
 import { app, BrowserWindow } from 'electron';
+import { observeMigrationProgress } from '../migrationOperation';
 import { logger } from '../../utils/logger';
 import { getPackageRoot } from '../../utils/appPaths';
 import type { AppDatabaseBackupService } from '../PGLiteDatabaseWorker';
@@ -417,6 +419,7 @@ export class SQLiteDatabaseProxy {
   }
 
   async startDryRun(args: {
+    cancellation?: SharedArrayBuffer;
     userDataPath: string;
     schemaDir: string;
   }): Promise<{ result: DryRunResult }> {
@@ -441,6 +444,10 @@ export class SQLiteDatabaseProxy {
     return (await this.send('migrationAdoptDryRun', args, 60 * 60 * 1000)) as {
       result: AdoptResult;
     };
+  }
+
+  async verifyCutover(receipt?: CutoverVerification): Promise<void> {
+    await this.send('verifyCutover', { receipt }, 120_000);
   }
 
   // --------------------------------------------------------------------------
@@ -526,6 +533,9 @@ export class SQLiteDatabaseProxy {
       // load.
       const timer = setTimeout(() => {
         if (this.pending.has(id)) {
+          // A UI deadline must not release ownership while the worker is
+          // still copying or renaming. These operations settle on reply/exit.
+          if (['migrationStart', 'migrationStartDryRun', 'migrationAdoptDryRun'].includes(type)) return;
           this.pending.delete(id);
           reject(new Error(`SQLite worker request '${type}' timed out after ${timeoutMs}ms`));
         }
@@ -573,6 +583,7 @@ export class SQLiteDatabaseProxy {
       || msg.event === 'db:migration:failed'
     ) {
       this.broadcastToWindows(msg.event, msg.payload);
+      observeMigrationProgress(msg.event, msg.payload);
       // Main-side observer. The boot-time forced migration drives the splash
       // screen, which is a plain data-URL BrowserWindow with no preload — it
       // cannot receive an ipcRenderer message, so the broadcast above never

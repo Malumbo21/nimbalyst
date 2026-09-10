@@ -1,7 +1,7 @@
 /**
  * PGLiteToSQLiteMigrator
  *
- * Copies every row from the legacy PGLite store into a fresh SQLite database
+ * Copies the legacy PGLite store into a fresh SQLite database
  * (already opened by `SQLiteDatabase` with the consolidated `0001_initial.sql`
  * schema applied). The migrator is the data-plane half of the migration;
  * orchestration (backup → quiesce → schema → copy → cutover) lives in the
@@ -11,6 +11,8 @@
  *   - Reads through the live PGLite worker bridge; final cutover reconciliation
  *     uses the source opened by the existing quiescence flow.
  *   - Writes each batch through the SQLite coordinator in a transaction.
+ *     Bounded, validated document-history defects retain their original rows
+ *     in a local quarantine table; all other failures remain strict.
  *     Source timeout recovery waits for actual source completion before retry.
  *   - `PRAGMA foreign_keys = OFF` during copy so we can insert tables in any
  *     order, plus self-referential FKs (`ai_sessions.parent_session_id`)
@@ -33,6 +35,7 @@
  *   - `PRAGMA foreign_key_check` returns no rows.
  */
 
+import { historyQuarantineCount } from './historyMigrationRecovery';
 import { copyMigrationTable } from './migrationTableCopy';
 import type { Database as BetterSqliteDb } from 'better-sqlite3';
 import type { SQLiteDatabase } from './SQLiteDatabase';
@@ -73,6 +76,7 @@ export interface MigrationProgress {
 }
 
 export interface MigrationSummary {
+  historyRowsQuarantined?: number;
   totalRowsCopied: number;
   tablesCopied: { name: string; rows: number }[];
   durationMs: number;
@@ -89,7 +93,7 @@ export interface MigrationSummary {
  *
  *   - `cursorMax`: max PK value seen for tables using cursor pagination —
  *     anything newer than this in PGLite must be incrementally copied.
- *   - `rows`: row count at the time of the dry-run; used for sanity warnings
+ *   - `rows`: successfully copied rows, excluding `rowsQuarantined`; used for sanity warnings
  *     in the UI ("X new rows since dry-run").
  *   - `cursorColumn`: the incremental catch-up key; absent means adoption
  *     re-copies the table, regardless of how its initial copy was paged.
@@ -102,12 +106,14 @@ export interface DryRunManifest {
   perTable: Array<{
     name: string;
     rows: number;
+    rowsQuarantined?: number;
     cursorColumn?: string;
     cursorMax?: string | number;
   }>;
 }
 
 export interface CatchUpResult {
+  historyRowsQuarantined?: number;
   rowsAdded: number;
   perTable: Array<{ name: string; added: number }>;
   manifest: DryRunManifest;
@@ -322,9 +328,7 @@ export class PGLiteToSQLiteMigrator {
         cursorColumn: FULL_COPY_COLUMNS[name],
         sampleSize: Math.min(spotCheckPerTable, Math.max(1, tableExpected)),
         onBatchProgress: (tableRowsCopied) => {
-          totalCopied = pgliteCounts
-            .slice(0, i)
-            .reduce((s, t) => s + t.rows, 0) + tableRowsCopied;
+          totalCopied = tableSummary.reduce((s, t) => s + t.rows, 0) + tableRowsCopied;
           opts.onProgress?.({
             phase: 'copying',
             currentTable: name,
@@ -346,6 +350,7 @@ export class PGLiteToSQLiteMigrator {
       manifestPerTable.push({
         name,
         rows: copied,
+        rowsQuarantined: name === 'document_history' ? historyQuarantineCount(sqliteHandle) : undefined,
         cursorColumn: CURSOR_COLUMNS[name],
         cursorMax: CURSOR_COLUMNS[name] ? cursorMax : undefined,
       });
@@ -458,8 +463,10 @@ export class PGLiteToSQLiteMigrator {
         elapsedMs: performance.now() - t0,
       });
       const actual = sqliteHandle.prepare(`SELECT COUNT(*) AS c FROM ${quoteIdent(name)}`).get() as { c: number };
-      if (actual.c !== expected) {
-        const drift = actual.c - expected;
+      const quarantined = name === 'document_history' ? historyQuarantineCount(sqliteHandle) : 0;
+      if (quarantined) log('warn', '[migrator] document history rows quarantined', { rowsQuarantined: quarantined });
+      if (actual.c + quarantined !== expected) {
+        const drift = actual.c + quarantined - expected;
         totalDrift += Math.abs(drift);
         log(
           'warn',
@@ -548,7 +555,8 @@ export class PGLiteToSQLiteMigrator {
 
     const durationMs = performance.now() - t0;
     const summary: MigrationSummary = {
-      totalRowsCopied: totalCopied,
+      historyRowsQuarantined: historyQuarantineCount(sqliteHandle),
+      totalRowsCopied: tableSummary.reduce((sum, table) => sum + table.rows, 0),
       tablesCopied: tableSummary,
       durationMs,
       integrityCheck: integrity,
@@ -598,9 +606,11 @@ export class PGLiteToSQLiteMigrator {
     const manifestByTable = new Map(opts.manifest.perTable.map((t) => [t.name, t]));
     // Measure current PGLite counts so we can show "X new rows" in the UI.
     const currentCounts = await this.measureSourceCounts(opts.pglite);
+    let totalCopied = 0;
     const totalExpectedNew = currentCounts.reduce((sum, t) => {
-      const old = manifestByTable.get(t.name)?.rows ?? 0;
-      return sum + Math.max(0, t.rows - old);
+      const prior = manifestByTable.get(t.name);
+      const old = (prior?.rows ?? 0) + (prior?.rowsQuarantined ?? 0);
+      return sum + (CURSOR_COLUMNS[t.name] && manifestByTable.get(t.name)?.cursorMax !== undefined ? Math.max(0, t.rows - old) : t.rows);
     }, 0);
 
     for (let i = 0; i < currentCounts.length; i++) {
@@ -609,18 +619,20 @@ export class PGLiteToSQLiteMigrator {
       const cursorColumn = CURSOR_COLUMNS[name];
       const batchSize = batchSizeForTable(name, requestedBatchSize);
       let added = 0;
+      let copiedRows = 0;
+      const tableExpected = cursorColumn && stored?.cursorMax !== undefined ? Math.max(0, currentTotal - stored.rows - (stored.rowsQuarantined ?? 0)) : currentTotal;
 
       opts.onProgress?.({
         phase: 'copying',
         currentTable: name,
-        rowsCopied: totalAdded,
+        rowsCopied: totalCopied,
         rowsExpected: totalExpectedNew,
         tableRowsCopied: 0,
-        tableRowsExpected: Math.max(0, currentTotal - (stored?.rows ?? 0)),
+        tableRowsExpected: tableExpected,
         tablesCompleted: i,
         tablesTotal: currentCounts.length,
         percentOfTotal:
-          totalExpectedNew === 0 ? 100 : (totalAdded / totalExpectedNew) * 100,
+          totalExpectedNew === 0 ? 100 : (totalCopied / totalExpectedNew) * 100,
         elapsedMs: performance.now() - t0,
       });
 
@@ -628,7 +640,8 @@ export class PGLiteToSQLiteMigrator {
         // Cursor catch-up: copy rows with PK > stored.cursorMax.
         const { copied, cursorMax } = await this.copyTable({
           sourceTable: name,
-          expectedRows: Math.max(0, currentTotal - stored.rows),
+          historySourceRows: currentTotal,
+          expectedRows: Math.max(0, currentTotal - stored.rows - (stored.rowsQuarantined ?? 0)),
           pglite: opts.pglite,
           sqlite: opts.sqlite,
           sqliteHandle,
@@ -640,35 +653,41 @@ export class PGLiteToSQLiteMigrator {
             opts.onProgress?.({
               phase: 'copying',
               currentTable: name,
-              rowsCopied: totalAdded + tableRowsCopied,
+              rowsCopied: totalCopied + tableRowsCopied,
               rowsExpected: totalExpectedNew,
               tableRowsCopied,
-              tableRowsExpected: Math.max(0, currentTotal - stored.rows),
+              tableRowsExpected: Math.max(0, currentTotal - stored.rows - (stored.rowsQuarantined ?? 0)),
               tablesCompleted: i,
               tablesTotal: currentCounts.length,
               percentOfTotal:
                 totalExpectedNew === 0
                   ? 100
-                  : ((totalAdded + tableRowsCopied) / totalExpectedNew) * 100,
+                  : ((totalCopied + tableRowsCopied) / totalExpectedNew) * 100,
               elapsedMs: performance.now() - t0,
             });
           },
           log,
         });
+        copiedRows = copied;
         added = copied;
         manifestPerTable.push({
           name,
-          rows: currentTotal,
+          rows: stored.rows + copied,
+          rowsQuarantined: name === 'document_history' ? historyQuarantineCount(sqliteHandle) : undefined,
           cursorColumn,
-          cursorMax,
+          cursorMax: cursorMax ?? stored.cursorMax,
         });
       } else {
         // No cursor or no prior manifest entry: re-copy the whole table.
         // Cheap for the small composite-PK tables we have. DELETE first so
         // updated rows replace what was there.
         sqliteHandle.exec(`DELETE FROM ${quoteIdent(name)}`);
+        // Rebuild omissions with the full recopy so stale records cannot collide or consume its budget.
+        if (name === 'document_history' && historyQuarantineCount(sqliteHandle) > 0)
+          sqliteHandle.exec('DELETE FROM migration_history_quarantine');
         const { copied, cursorMax } = await this.copyTable({
           sourceTable: name,
+          historySourceRows: currentTotal,
           expectedRows: currentTotal,
           pglite: opts.pglite,
           sqlite: opts.sqlite,
@@ -676,19 +695,28 @@ export class PGLiteToSQLiteMigrator {
           batchSize,
           cursorColumn: FULL_COPY_COLUMNS[name],
           sampleSize: 0,
-          onBatchProgress: () => { /* recopy progress is short; skip per-batch noise */ },
+          onBatchProgress: tableRowsCopied => opts.onProgress?.({
+            phase: 'copying', currentTable: name, rowsCopied: totalCopied + tableRowsCopied,
+            rowsExpected: totalExpectedNew, tableRowsCopied, tableRowsExpected: tableExpected,
+            tablesCompleted: i, tablesTotal: currentCounts.length,
+            percentOfTotal: totalExpectedNew ? Math.min(100, (totalCopied + tableRowsCopied) / totalExpectedNew * 100) : 100,
+            elapsedMs: performance.now() - t0,
+          }),
           log,
         });
+        copiedRows = copied;
         added = copied - (stored?.rows ?? 0);
         manifestPerTable.push({
           name,
-          rows: currentTotal,
+          rows: copied,
+          rowsQuarantined: name === 'document_history' ? historyQuarantineCount(sqliteHandle) : undefined,
           cursorColumn,
           cursorMax: cursorColumn ? cursorMax : undefined,
         });
       }
 
       perTable.push({ name, added });
+      totalCopied += copiedRows;
       totalAdded += Math.max(0, added);
       log('info', `[catchUp] ${name}: +${added} rows`);
     }
@@ -703,6 +731,7 @@ export class PGLiteToSQLiteMigrator {
 
     log('info', '[catchUp] complete', { totalAdded, durationMs: performance.now() - t0 });
     return {
+      historyRowsQuarantined: historyQuarantineCount(sqliteHandle),
       rowsAdded: totalAdded,
       perTable,
       manifest: {
@@ -760,6 +789,7 @@ export class PGLiteToSQLiteMigrator {
   private async copyTable(opts: {
     sourceTable: string;
     expectedRows: number;
+    historySourceRows?: number;
     pglite: PGLiteHandle;
     sqlite: SQLiteDatabase;
     sqliteHandle: BetterSqliteDb;
@@ -779,7 +809,7 @@ export class PGLiteToSQLiteMigrator {
     onBatchProgress: (rowsCopiedInTable: number) => void;
     log: NonNullable<MigrateOptions['log']>;
   }): Promise<{ copied: number; samples: Record<string, unknown>[]; cursorMax?: string | number }> {
-    if (opts.expectedRows === 0) {
+    if (opts.expectedRows === 0 && opts.initialCursor === undefined) {
       opts.onBatchProgress(0);
       return { copied: 0, samples: [] };
     }

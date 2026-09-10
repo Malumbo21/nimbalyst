@@ -15,6 +15,7 @@
 import { describe, expect, it, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import * as fs from 'fs';
+import { deserialize } from 'node:v8';
 import * as os from 'os';
 import * as path from 'path';
 import { SQLiteDatabase } from '../SQLiteDatabase';
@@ -571,6 +572,100 @@ describe('PGLiteToSQLiteMigrator', () => {
     expect(progressEvents[progressEvents.length - 1].percentOfTotal).toBe(100);
   });
 
+  async function seedHistory(count: number, badIds: number[]) {
+    await seedPgliteSchema();
+    await pglite.exec('ALTER TABLE document_history ALTER COLUMN content DROP NOT NULL');
+    await pglite.exec(`INSERT INTO document_history(workspace_id, file_path, content, timestamp)
+      SELECT 'ws-A', 'history-' || n, decode('00ff10', 'hex'), n FROM generate_series(1, ${count}) n`);
+    for (const id of badIds) await pglite.query(
+      `UPDATE document_history SET content = NULL WHERE id = $1`, [id]);
+  }
+
+  it('migrates nullable metadata and JSONB string scalars intact without quarantine', async () => {
+    await seedHistory(3, []);
+    await pglite.exec(`ALTER TABLE document_history ALTER COLUMN metadata DROP NOT NULL;
+      UPDATE document_history SET metadata = CASE id WHEN 1 THEN '"invalid-json-text"'::jsonb WHEN 2 THEN NULL ELSE 'null'::jsonb END`);
+    const summary = await new PGLiteToSQLiteMigrator().migrate({ pglite, sqlite, spotCheckPerTable: 3 });
+    expect(summary.historyRowsQuarantined).toBe(0);
+    expect(sqlite.getRawHandle()!.prepare('SELECT metadata, content FROM document_history ORDER BY id').all()).toEqual([
+      { metadata: '"invalid-json-text"', content: Buffer.from([0, 255, 16]) },
+      { metadata: '{}', content: Buffer.from([0, 255, 16]) },
+      { metadata: '{}', content: Buffer.from([0, 255, 16]) },
+    ]);
+  });
+
+  it('rebuilds history quarantine during full recopy without retaining stale omissions', async () => {
+    await seedHistory(300, [50, 100]);
+    const migrator = new PGLiteToSQLiteMigrator();
+    const first = await migrator.migrate({ pglite, sqlite });
+    await pglite.exec("UPDATE document_history SET content = decode('00ff10', 'hex') WHERE id = 50");
+    const manifest = { ...first.manifest!, perTable: first.manifest!.perTable.filter(t => t.name !== 'document_history') };
+    const next = await migrator.catchUp({ pglite, sqlite, manifest });
+    expect(next.historyRowsQuarantined).toBe(1);
+    expect(sqlite.getRawHandle()!.prepare('SELECT source_id FROM migration_history_quarantine').all()).toEqual([{ source_id: 100 }]);
+    expect(sqlite.getRawHandle()!.prepare('SELECT count(*) AS n FROM document_history').get()).toEqual({ n: 299 });
+  });
+
+  it('quarantines isolated history rows, verifies only copied samples, and retains originals after reopen', async () => {
+    await seedHistory(100, [50]);
+    const summary = await new PGLiteToSQLiteMigrator().migrate({ pglite, sqlite, batchSize: 100, spotCheckPerTable: 100 });
+    expect(summary.historyRowsQuarantined).toBe(1);
+    expect(summary.tablesCopied.find(t => t.name === 'document_history')?.rows).toBe(99);
+    expect(summary.manifest?.perTable.find(t => t.name === 'document_history')).toMatchObject({ rows: 99, cursorMax: 100, rowsQuarantined: 1 });
+    expect(summary.integrityCheck).toBe('ok');
+    expect(summary.foreignKeyViolations).toBe(0);
+    expect((await pglite.query('SELECT count(*) AS n FROM document_history')).rows).toEqual([{ n: 100 }]);
+    await sqlite.close();
+    sqlite = new SQLiteDatabase({ dbDir: sqliteDir, schemaDir: SCHEMA_DIR });
+    await sqlite.initialize();
+    const row = sqlite.getRawHandle()!.prepare('SELECT source_row, reason_code FROM migration_history_quarantine WHERE source_id = 50').get() as { source_row: Buffer; reason_code: string };
+    expect(deserialize(row.source_row)).toMatchObject({ id: 50, metadata: {}, content: null });
+    expect(row.reason_code).toBe('history_null_required_value');
+    expect(sqlite.getRawHandle()!.prepare('SELECT count(*) AS n FROM document_history').get()).toEqual({ n: 99 });
+  });
+
+  it('enforces a cumulative history loss budget across catch-up and retains the skipped high-water mark', async () => {
+    await seedHistory(100, [100]);
+    const migrator = new PGLiteToSQLiteMigrator();
+    const first = await migrator.migrate({ pglite, sqlite });
+    const noChange = await migrator.catchUp({ pglite, sqlite, manifest: first.manifest! });
+    expect(noChange.manifest.perTable.find(t => t.name === 'document_history')).toMatchObject({ rows: 99, cursorMax: 100, rowsQuarantined: 1 });
+    await pglite.exec(`INSERT INTO document_history(workspace_id,file_path,content,timestamp,metadata)
+      VALUES ('ws-A','new-bad',NULL,101,'{}'::jsonb)`);
+    await expect(migrator.catchUp({ pglite, sqlite, manifest: noChange.manifest })).rejects.toThrow(/history.*limit/i);
+    expect(sqlite.getRawHandle()!.prepare('SELECT count(*) AS n FROM migration_history_quarantine').get()).toEqual({ n: 1 });
+    await pglite.exec(`INSERT INTO document_history(workspace_id,file_path,content,timestamp)
+      SELECT 'ws-A','new-good-' || n,decode('00','hex'),n FROM generate_series(102,200) n`);
+    const next = await migrator.catchUp({ pglite, sqlite, manifest: noChange.manifest });
+    expect(next.historyRowsQuarantined).toBe(2);
+    expect(next.manifest.perTable.find(t => t.name === 'document_history')).toMatchObject({ rows: 198, cursorMax: 200, rowsQuarantined: 2 });
+  });
+
+  it('drains the history cursor even when deletions make the estimated catch-up delta zero', async () => {
+    await seedHistory(100, [100]);
+    const migrator = new PGLiteToSQLiteMigrator();
+    const first = await migrator.migrate({ pglite, sqlite });
+    await pglite.exec(`DELETE FROM document_history WHERE id = 1;
+      INSERT INTO document_history(workspace_id,file_path,content,timestamp)
+      VALUES ('ws-A','new-after-deletion',decode('abcd','hex'),101)`);
+    const next = await migrator.catchUp({ pglite, sqlite, manifest: first.manifest! });
+    expect(next.manifest.perTable.find(t => t.name === 'document_history')).toMatchObject({ cursorMax: 101, rowsQuarantined: 1 });
+    expect(sqlite.getRawHandle()!.prepare('SELECT content FROM document_history WHERE id = 101').get()).toEqual({ content: Buffer.from([171, 205]) });
+  });
+
+  it('keeps message row failures fatal', async () => {
+    await seedPgliteSchema();
+    await seedRows();
+    await pglite.exec('ALTER TABLE ai_agent_messages ALTER COLUMN content DROP NOT NULL; UPDATE ai_agent_messages SET content = NULL');
+    await expect(new PGLiteToSQLiteMigrator().migrate({ pglite, sqlite })).rejects.toThrow(/NOT NULL/);
+  });
+
+  it('refuses history omissions above one percent and rolls back the whole failed batch', async () => {
+    await seedHistory(100, [50, 100]);
+    await expect(new PGLiteToSQLiteMigrator().migrate({ pglite, sqlite, batchSize: 100 })).rejects.toThrow(/history.*limit/i);
+    expect(sqlite.getRawHandle()!.prepare('SELECT count(*) AS n FROM document_history').get()).toEqual({ n: 0 });
+  });
+
   it('translates BYTEA -> Buffer roundtrips intact', async () => {
     await seedPgliteSchema();
     const payload = Buffer.from(Array.from({ length: 256 }, (_, i) => i));
@@ -667,7 +762,9 @@ describe('PGLiteToSQLiteMigrator', () => {
     await pglite.query("DELETE FROM ai_sessions WHERE id = 'd'");
     await pglite.query("INSERT INTO session_files(id, session_id, workspace_id, file_path, link_type) VALUES ('a', 'a', 'ws', 'new', 'read')");
     await pglite.query("UPDATE session_files SET file_path = 'updated' WHERE id = 'c'");
-    await migrator.catchUp({ pglite: source, sqlite, batchSize: 2, manifest: summary.manifest! });
+    const catchUpProgress: MigrationProgress[] = [];
+    await migrator.catchUp({ pglite: source, sqlite, batchSize: 2, manifest: summary.manifest!, onProgress: p => catchUpProgress.push(p) });
+    expect(catchUpProgress.some(p => p.currentTable === 'ai_sessions' && p.tableRowsCopied === 2 && p.tableRowsExpected === 3)).toBe(true);
     expect(sqlite.getRawHandle()!.prepare('SELECT id, title FROM ai_sessions ORDER BY id').all()).toEqual([
       { id: 'a', title: 'new' }, { id: 'b', title: 'b' }, { id: 'c', title: 'updated' },
     ]);

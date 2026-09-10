@@ -13,6 +13,7 @@ import { PGlite } from '@electric-sql/pglite';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
+import { beginDatabaseMaintenance, resetDatabaseMaintenanceForTests } from '../databaseMaintenance';
 import { PGLiteDatabaseWorker, clampReadOnlyTimeout, raceWithTimeout } from '../PGLiteDatabaseWorker';
 
 interface Pg {
@@ -225,4 +226,17 @@ describe('PGLite migration request lifetime', () => {
       vi.useRealTimers();
     }
   });
+});
+
+
+it('fences worker requests during cutover while still allowing the owned close', async () => {
+  const worker = Object.create(PGLiteDatabaseWorker.prototype) as any;
+  worker.requests = { send: vi.fn(async () => ({ closed: true })) };
+  beginDatabaseMaintenance();
+  try {
+    expect(() => worker.sendMessage('query', { sql: 'SELECT 1' })).toThrow(/Restart Nimbalyst/);
+    expect(() => worker.sendMessage('exec', { sql: 'INSERT INTO ai_sessions VALUES (1)' })).toThrow(/Restart Nimbalyst/);
+    expect(worker.requests.send).not.toHaveBeenCalled();
+    await expect(worker.sendMessage('close')).resolves.toEqual({ closed: true });
+  } finally { resetDatabaseMaintenanceForTests(); }
 });

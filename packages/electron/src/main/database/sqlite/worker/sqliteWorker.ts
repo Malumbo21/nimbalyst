@@ -30,6 +30,7 @@ import * as fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { PGlite } from '@electric-sql/pglite';
 import { SQLiteDatabase } from '../SQLiteDatabase';
+import { verifyCutoverContent, type CutoverVerification } from '../cutoverVerification';
 import { SQLiteBackupService } from '../../../services/database/SQLiteBackupService';
 import { verifyBackupOffThread } from '../backupVerification';
 import { createRecoveryVerifier } from '../../recovery/recoveryVerification';
@@ -368,6 +369,12 @@ async function handle(req: RequestEnvelope): Promise<unknown> {
 
     case 'isInitialized':
       return { initialized: sqlite?.isInitialized() ?? false };
+
+    case 'verifyCutover': {
+      const { receipt } = req.payload as { receipt?: CutoverVerification };
+      verifyCutoverContent(ensureInitialized(), receipt);
+      return { verified: true };
+    }
 
     case 'query': {
       const { sql, params } = req.payload as QueryPayload;

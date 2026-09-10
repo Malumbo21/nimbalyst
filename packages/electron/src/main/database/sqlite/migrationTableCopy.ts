@@ -1,3 +1,4 @@
+import { historyBatchWriter } from "./historyMigrationRecovery";
 import type { Database as BetterSqliteDb } from "better-sqlite3";
 import type { SQLiteDatabase } from "./SQLiteDatabase";
 import type {
@@ -27,6 +28,7 @@ export async function copyMigrationTable(opts: {
   conflictKeys?: readonly string[];
   sourceTable: string;
   expectedRows: number;
+  historySourceRows?: number;
   pglite: PGLiteHandle;
   sqlite: SQLiteDatabase;
   sqliteHandle: BetterSqliteDb;
@@ -50,7 +52,7 @@ export async function copyMigrationTable(opts: {
   samples: Record<string, unknown>[];
   cursorMax?: string | number;
 }> {
-  if (opts.expectedRows === 0) {
+  if (opts.expectedRows === 0 && opts.initialCursor === undefined) {
     opts.onBatchProgress(0);
     return { copied: 0, samples: [] };
   }
@@ -103,6 +105,15 @@ export async function copyMigrationTable(opts: {
     for (const r of rows) stmt.run(...r);
   });
 
+  const writeHistory =
+    opts.sourceTable === "document_history"
+      ? historyBatchWriter(
+          opts.sqliteHandle,
+          opts.historySourceRows ?? opts.expectedRows,
+          (row) => stmt.run(...opts.translateRow(row, insertableCols))
+        )
+      : undefined;
+
   // Cursor-paginated path: WHERE pk > $cursor ORDER BY pk LIMIT N. This is
   // O(n) total work across the whole table because each batch starts from
   // an indexed position, not from row 0. For ai_agent_messages this is the
@@ -119,6 +130,7 @@ export async function copyMigrationTable(opts: {
   const filterSql = opts.filterSql;
 
   let copied = 0;
+  let quarantined = 0;
   let offset = 0;
   let cursor: unknown =
     opts.initialCursor !== undefined ? opts.initialCursor : null;
@@ -192,9 +204,10 @@ export async function copyMigrationTable(opts: {
     const readMs = performance.now() - readStarted;
     if (result.rows.length === 0) break;
 
-    const translatedBatch: unknown[][] = result.rows.map((row) =>
-      opts.translateRow(row, insertableCols)
-    );
+    const translatedBatch = writeHistory
+      ? undefined
+      : result.rows.map((row) => opts.translateRow(row, insertableCols));
+    let accepted = result.rows;
 
     // Run the insert through the hot write lane. Each batch is a single
     // BEGIN IMMEDIATE / COMMIT so we pay one fsync per batch instead of one
@@ -206,7 +219,8 @@ export async function copyMigrationTable(opts: {
       throw new Error("SQLiteDatabase coordinator not available");
     await coordinator.write((db: BetterSqliteDb) => {
       if (db === opts.sqliteHandle) {
-        insertMany(translatedBatch);
+        if (writeHistory) accepted = writeHistory(result.rows);
+        else insertMany(translatedBatch!);
       } else {
         // Defensive: coordinator should always pass the same handle we
         // prepared the statement against.
@@ -215,7 +229,7 @@ export async function copyMigrationTable(opts: {
     });
 
     const writeMs = performance.now() - writeStarted;
-    for (const row of result.rows) {
+    for (const row of accepted) {
       if (samples.length < opts.sampleSize) {
         samples.push(row);
       } else {
@@ -230,7 +244,8 @@ export async function copyMigrationTable(opts: {
     opts.log("info", "[migrator] copied batch", {
       table: opts.sourceTable,
       attemptedLimit,
-      rows: result.rows.length,
+      rows: accepted.length,
+      rowsQuarantined: result.rows.length - accepted.length,
       bytes,
       readMs,
       writeMs,
@@ -238,7 +253,8 @@ export async function copyMigrationTable(opts: {
     });
     recoveryStarted = undefined;
     retries = 0;
-    copied += result.rows.length;
+    copied += accepted.length;
+    quarantined += result.rows.length - accepted.length;
     if (useCursor) {
       // Advance cursor to the last PK we just read. PGLite returns the rows
       // already ordered by pkCol, so the last row's PK is the new high-water.
@@ -252,10 +268,10 @@ export async function copyMigrationTable(opts: {
     if (result.rows.length < attemptedLimit) break;
   }
 
-  if (copied !== opts.expectedRows) {
+  if (copied + quarantined !== opts.expectedRows) {
     opts.log(
       "warn",
-      `[migrator] ${opts.sourceTable}: copied ${copied} but expected ${opts.expectedRows}`
+      `[migrator] ${opts.sourceTable}: copied ${copied} and quarantined ${quarantined} but expected ${opts.expectedRows}`
     );
   }
   const cursorMax =
