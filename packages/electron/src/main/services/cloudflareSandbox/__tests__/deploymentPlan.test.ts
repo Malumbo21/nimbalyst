@@ -72,6 +72,14 @@ describe("buildPlan", () => {
     });
   });
 
+  it("names the container application, since delete has to remove it separately from the worker", () => {
+    expect(buildPlan(inputs()).resources).toContainEqual({
+      kind: "Container application",
+      name: "nimbalyst-sandbox-nimbalystsandbox",
+      action: "create",
+    });
+  });
+
   it("always requires a paid plan and says so in the cost notes", () => {
     const plan = buildPlan(inputs());
 

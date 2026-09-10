@@ -118,8 +118,34 @@ beforeEach(() => {
         errorMessage: input.errorMessage ?? null,
       } as SandboxDeployment)
   );
-  vi.mocked(runWrangler).mockResolvedValue({ stdout: "", stderr: "" });
+  answerWrangler({ applications: [] });
 });
+
+const APP_ID = "a033a6ac-f267-4792-baac-09437eb1f1fd";
+const OTHER_APP_ID = "5e0d7e0b-2f8e-4a5e-9f1a-3c1e0d3b8a11";
+
+/**
+ * Wrangler answers by command. `containers list` reports `applications` on the
+ * first call and `remaining` afterwards, so a test can model an application
+ * that survives its own delete.
+ */
+function answerWrangler(options: {
+  applications: Array<{ id: string; name: string }>;
+  remaining?: Array<{ id: string; name: string }>;
+  workerDelete?: () => Promise<void>;
+}) {
+  let lists = 0;
+  vi.mocked(runWrangler).mockImplementation(async (args) => {
+    if (args[0] === "delete" && options.workerDelete) await options.workerDelete();
+    if (args[0] === "containers" && args[1] === "list") {
+      lists += 1;
+      const apps =
+        lists === 1 ? options.applications : options.remaining ?? [];
+      return { stdout: JSON.stringify(apps), stderr: "" };
+    }
+    return { stdout: "", stderr: "" };
+  });
+}
 
 describe("planDeployment", () => {
   it("refuses an account the chosen profile cannot reach", async () => {
@@ -359,6 +385,79 @@ describe("deleteDeployment", () => {
     expect(result).toEqual({ success: true, data: null });
     expect(vi.mocked(store.clearDeployment)).toHaveBeenCalledOnce();
   });
+
+  // Wrangler's Worker delete leaves the container application behind, which
+  // the first live delete proved: the panel said nothing remained while the
+  // application sat in the account in state "ready".
+  it("deletes every container application named for the worker, and only those, before clearing the record", async () => {
+    answerWrangler({
+      applications: [
+        { id: APP_ID, name: `${WORKER_NAME}-nimbalystsandbox` },
+        { id: OTHER_APP_ID, name: "someone-elses-worker-nimbalystsandbox" },
+      ],
+      remaining: [
+        { id: OTHER_APP_ID, name: "someone-elses-worker-nimbalystsandbox" },
+      ],
+    });
+    const service = new CloudflareSandboxService();
+
+    const result = await service.deleteDeployment({
+      ...TARGET,
+      confirmed: true,
+    });
+
+    expect(result).toEqual({ success: true, data: null });
+    const commands = vi
+      .mocked(runWrangler)
+      .mock.calls.map(([args]) => args.slice(0, 3).join(" "));
+    expect(commands).toContain(`containers delete ${APP_ID}`);
+    expect(commands.join("\n")).not.toContain(OTHER_APP_ID);
+    // The Worker goes first: its Durable Object is what keeps the container alive.
+    expect(commands.indexOf(`delete --name ${WORKER_NAME}`)).toBeLessThan(
+      commands.indexOf(`containers delete ${APP_ID}`)
+    );
+    expect(vi.mocked(store.clearDeployment)).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the record when a container application survives the delete", async () => {
+    const app = { id: APP_ID, name: `${WORKER_NAME}-nimbalystsandbox` };
+    answerWrangler({ applications: [app], remaining: [app] });
+    const service = new CloudflareSandboxService();
+
+    const result = await service.deleteDeployment({
+      ...TARGET,
+      confirmed: true,
+    });
+
+    expect(result.success).toBe(false);
+    expect(vi.mocked(store.clearDeployment)).not.toHaveBeenCalled();
+    expect(vi.mocked(store.updateDeployment)).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "error" })
+    );
+  });
+
+  it("still removes the container application when an earlier attempt already deleted the worker", async () => {
+    answerWrangler({
+      applications: [{ id: APP_ID, name: `${WORKER_NAME}-nimbalystsandbox` }],
+      workerDelete: async () => {
+        throw new SandboxOperationError("worker-missing", "wrangler-cli");
+      },
+    });
+    const service = new CloudflareSandboxService();
+
+    const result = await service.deleteDeployment({
+      ...TARGET,
+      confirmed: true,
+    });
+
+    expect(result).toEqual({ success: true, data: null });
+    expect(
+      vi.mocked(runWrangler).mock.calls.some(
+        ([args]) => args[0] === "containers" && args[1] === "delete" && args[2] === APP_ID
+      )
+    ).toBe(true);
+    expect(vi.mocked(store.clearDeployment)).toHaveBeenCalledOnce();
+  });
 });
 
 describe("review regressions", () => {
@@ -507,7 +606,7 @@ describe("review regressions", () => {
       order.push(`${args[0]}:start`);
       await new Promise((resolve) => setTimeout(resolve, 5));
       order.push(`${args[0]}:end`);
-      return { stdout: "", stderr: "" };
+      return { stdout: args[0] === "containers" ? "[]" : "", stderr: "" };
     });
     const service = new CloudflareSandboxService({
       artifacts: availableArtifacts(),
@@ -519,7 +618,10 @@ describe("review regressions", () => {
       service.deleteDeployment({ ...TARGET, confirmed: true }),
     ]);
 
-    expect(order).toHaveLength(4);
+    // The deploy's single Wrangler call finishes before any of the delete's
+    // calls (worker delete, application list) begin.
+    expect(order.slice(0, 2)).toEqual(["deploy:start", "deploy:end"]);
+    expect(order.slice(2).some((event) => event.startsWith("deploy"))).toBe(false);
     // No operation starts before the previous one finished.
     for (let i = 0; i + 1 < order.length; i += 2) {
       expect(order[i].endsWith(":start")).toBe(true);

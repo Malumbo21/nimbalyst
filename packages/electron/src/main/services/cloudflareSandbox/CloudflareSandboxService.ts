@@ -41,6 +41,11 @@ import {
   type SandboxArtifactProvider,
 } from "./artifactProvider";
 import {
+  applicationsForWorker,
+  deleteContainerApplication,
+  listContainerApplications,
+} from "./containerApplications";
+import {
   buildPlan,
   PlanRegistry,
   requireAvailableArtifact,
@@ -344,33 +349,43 @@ export class CloudflareSandboxService {
         }
         const saved = requireTarget(request);
 
-        // Delete through a generated config carrying the saved account, not a
-        // bare `--name`: that would let Wrangler pick an account implicitly and
-        // delete a same-named Worker somewhere the user never chose.
+        // See deleteWorker for why the generated config carries the account.
         const configPath = await writeControlConfig({
           workerName: this.#workerName(saved),
           accountId: saved.account.id,
         });
         const cwd = await resolvedProfileDir(saved.profileName);
 
+        const workerName = this.#workerName(saved);
+        const scope = { configPath, profileName: saved.profileName, cwd };
+
         updateDeployment({ status: "deleting" });
         try {
-          await runWrangler(
-            [
-              "delete",
-              "--name",
-              this.#workerName(saved),
-              "--config",
-              configPath,
-              "--profile",
-              saved.profileName,
-              "--force",
-            ],
-            { cwd, timeoutMs: 5 * 60_000 }
+          await deleteWorker(workerName, scope);
+          // The Worker delete leaves the container application behind. Remove
+          // every application named for this Worker, then look again: the
+          // record is cleared only once the account shows none, because the
+          // record is the only pointer the UI has to what is still billing.
+          for (const app of applicationsForWorker(
+            await listContainerApplications(scope),
+            workerName
+          )) {
+            await deleteContainerApplication(app.id, scope);
+          }
+          const remaining = applicationsForWorker(
+            await listContainerApplications(scope),
+            workerName
           );
+          if (remaining.length > 0) {
+            throw new SandboxOperationError(
+              "unknown",
+              "container-application-remains"
+            );
+          }
         } catch (error) {
           // Keep the record. A failed delete that erased its own record would
-          // strand a live Worker with nothing in the UI pointing at it.
+          // strand a live Worker or container with nothing in the UI pointing
+          // at it.
           updateDeployment({
             status: "error",
             errorMessage:
@@ -499,6 +514,44 @@ export class CloudflareSandboxService {
     } catch (error) {
       return { success: false, error: toSandboxError(error) };
     }
+  }
+}
+
+/**
+ * Delete the Worker through a generated config carrying the saved account, not
+ * a bare `--name`: that would let Wrangler pick an account implicitly and
+ * delete a same-named Worker somewhere the user never chose.
+ *
+ * A Worker that is already gone counts as deleted. That is the retry case: an
+ * earlier attempt removed the Worker and then failed on the container
+ * application, and the user is trying again to finish the job.
+ */
+async function deleteWorker(
+  workerName: string,
+  scope: { configPath: string; profileName: string; cwd: string }
+): Promise<void> {
+  try {
+    await runWrangler(
+      [
+        "delete",
+        "--name",
+        workerName,
+        "--config",
+        scope.configPath,
+        "--profile",
+        scope.profileName,
+        "--force",
+      ],
+      { cwd: scope.cwd, timeoutMs: 5 * 60_000 }
+    );
+  } catch (error) {
+    if (
+      error instanceof SandboxOperationError &&
+      error.sandboxErrorCode === "worker-missing"
+    ) {
+      return;
+    }
+    throw error;
   }
 }
 

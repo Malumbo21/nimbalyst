@@ -36,6 +36,15 @@ export const SANDBOX_CLASS_NAME = "NimbalystSandbox";
 const WORKER_NAME_PREFIX = "nimbalyst-sandbox";
 
 /**
+ * The container application Cloudflare creates for a `containers` entry is
+ * named `<worker>-<class name, lower-cased>`. It outlives the Worker: deleting
+ * the Worker does not delete it, so delete has to address it by this name.
+ */
+export function containerApplicationName(workerName: string): string {
+  return `${workerName}-${SANDBOX_CLASS_NAME.toLowerCase()}`;
+}
+
+/**
  * Derive the installation-unique Worker name from a stable installation id.
  *
  * Hashed rather than used raw so the deployed Worker name does not leak an

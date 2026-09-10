@@ -71,6 +71,12 @@ export type CloudflareSandboxErrorCode =
   | 'deploy-failed'
   /** The request named a deployment/revision that is no longer the saved one. */
   | 'deployment-stale'
+  /**
+   * Cloudflare reports no Worker by the saved name. Only raised internally: a
+   * retried delete treats it as "already done" and carries on with the
+   * container application, which Wrangler's Worker delete leaves behind.
+   */
+  | 'worker-missing'
   /** A destructive request arrived without its explicit confirmation. */
   | 'confirmation-required'
   /** The deployment exists but its container could not be reached. */

@@ -43,6 +43,8 @@ const MESSAGES: Record<CloudflareSandboxErrorCode, string> = {
     "Wrangler could not finish the deployment. Some resources may already have been created in your Cloudflare account — Nimbalyst kept this sandbox listed so you can retry or delete it.",
   "deployment-stale":
     "This sandbox has changed since it was loaded. Reload it before continuing.",
+  "worker-missing":
+    "The Worker for this sandbox no longer exists in your Cloudflare account.",
   "confirmation-required":
     "This action needs an explicit confirmation before it can run.",
   "container-unavailable":
@@ -73,6 +75,13 @@ const CLASSIFIERS: ReadonlyArray<
     "account-required",
   ],
   [/\bcode(?:["']?\s*:\s*|\s+)10000\b|authentication error/i, "not-authenticated"],
+  // 10090 is what `wrangler delete` reports for a name with no Worker behind
+  // it (seen live on the first delete retry). A retried delete needs to tell
+  // this apart from a failure so it can finish removing the container.
+  [
+    /\bcode(?:["']?\s*:\s*|\s+)10090\b|this worker does not exist|service_not_found/i,
+    "worker-missing",
+  ],
 ];
 
 /** Classify raw subprocess text. Exported for tests; never returns the text. */

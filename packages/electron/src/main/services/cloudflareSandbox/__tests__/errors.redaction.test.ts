@@ -44,6 +44,13 @@ describe("credential redaction", () => {
   });
 
   it.each([
+    "This Worker does not exist on this account. [code: 10090]",
+    '{"errors":[{"code":10090,"message":"workers.api.error.service_not_found"}]}',
+  ])("recognizes a worker that is already gone, so a retried delete can finish cleanup: %s", (raw) => {
+    expect(classifyWranglerFailure(raw)).toBe("worker-missing");
+  });
+
+  it.each([
     "In a non-interactive environment, it is mandatory to specify an account ID",
     "Please set the appropriate `account_id` in your wrangler.json file",
   ])("recognizes account selection instructions: %s", (raw) => {

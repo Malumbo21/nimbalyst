@@ -23,6 +23,7 @@ import type {
 } from "../../../shared/cloudflareSandbox";
 import type { ArtifactAvailability } from "./artifactProvider";
 import { SandboxOperationError } from "./errors";
+import { containerApplicationName } from "./workerConfig";
 
 /** Fixed identity of the single sandbox this version manages. */
 export const SANDBOX_ID = "personal";
@@ -68,6 +69,13 @@ export function buildPlan(inputs: PlanInputs): DeploymentPlan {
       {
         kind: "Durable Object namespace",
         name: `${inputs.workerName}: NimbalystSandbox`,
+        action,
+      },
+      // Listed separately from the Worker because it is deleted separately;
+      // the review should show everything delete will have to remove.
+      {
+        kind: "Container application",
+        name: containerApplicationName(inputs.workerName),
         action,
       },
       { kind: "Container image", name: inputs.imageRef, action: "reuse" },
