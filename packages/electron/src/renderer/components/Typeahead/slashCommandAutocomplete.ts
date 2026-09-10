@@ -126,7 +126,7 @@ export function buildSlashCommandOptions(
     }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => hasQuery
-      ? a.command.name.localeCompare(b.command.name, undefined, { sensitivity: 'base' })
+      ? b.score - a.score || a.command.name.localeCompare(b.command.name, undefined, { sensitivity: 'base' })
       : b.score - a.score)
     .map(({ command }) => ({
       id: command.name,
