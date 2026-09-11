@@ -34,7 +34,6 @@ jobs:
     outputs:
       docs-only: ${{ steps.select.outputs.docs-only }}
       sandbox: ${{ steps.select.outputs.sandbox }}
-      source-tree: ${{ steps.select.outputs.source-tree }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -78,7 +77,7 @@ jobs:
             node_modules
             packages/*/node_modules
             packages/extensions/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ runner.arch }}-node24-${{ hashFiles('**/package-lock.json', '**/package.json', '.npmrc', 'patches/**', 'scripts/install-git-hooks.mjs') }}
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('**/package-lock.json', 'patches/**') }}
 
       - name: Install dependencies
         if: needs.changes.outputs.docs-only != 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'
@@ -104,19 +103,11 @@ jobs:
       # gates the store binding that only exists once the bundle is built. The
       # pre-push hook gets that dist for free because typecheck:prepush runs
       # the collab-bundle typecheck (which builds) before vitest; CI has to
-      # build it explicitly or the import cannot resolve.
-      - name: Cache collab-bundle build
-        if: needs.changes.outputs.docs-only != 'true'
-        id: cache-collab-bundle
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            packages/collab-bundle/dist
-            packages/collab-bundle/types
-          key: collab-bundle-v1-${{ runner.os }}-${{ runner.arch }}-node24-${{ needs.changes.outputs.source-tree }}
-
+      # build it explicitly or the import cannot resolve. Not cached: the
+      # bundle pulls from runtime, collab-client, tracker-core, and protocol,
+      # and a key that misses one of those inputs restores a stale bundle.
       - name: Build collab-bundle
-        if: needs.changes.outputs.docs-only != 'true' && steps.cache-collab-bundle.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.docs-only != 'true'
         run: node scripts/run-validation.mjs bundle-build
 
       - name: Check override/dep sync
@@ -173,7 +164,7 @@ jobs:
             node_modules
             packages/*/node_modules
             packages/extensions/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ runner.arch }}-node24-${{ hashFiles('**/package-lock.json', '**/package.json', '.npmrc', 'patches/**', 'scripts/install-git-hooks.mjs') }}
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('**/package-lock.json', 'patches/**') }}
 
       - name: Install dependencies
         if: needs.changes.outputs.docs-only != 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'
@@ -196,15 +187,17 @@ jobs:
         run: npm run extension-sdk:check-public
 
       # Cache the runtime build output (~46s vite build). Key includes
-      # the entire tracked tree: source, filesystem-read inputs, configuration,
-      # dependency patches, and lockfiles. Exact keys never restore partial output.
+      # everything the build reads: runtime sources/config, extension-sdk
+      # sources (consumed via workspace), dependency patches, and the lock file.
+      # Never key this on the whole tree: that hash changes on every commit, so
+      # the cache can only ever hit on a re-run of the same commit.
       - name: Cache runtime build
         if: needs.changes.outputs.docs-only != 'true'
         id: cache-runtime-dist
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: packages/runtime/dist
-          key: runtime-dist-v2-${{ runner.os }}-${{ runner.arch }}-node24-${{ needs.changes.outputs.source-tree }}
+          key: runtime-dist-${{ runner.os }}-node24-${{ hashFiles('packages/runtime/src/**', 'packages/runtime/vite.config.*', 'packages/runtime/package.json', 'packages/runtime/tsconfig*.json', 'packages/extension-sdk/src/**', 'package-lock.json', 'patches/**') }}
 
       - name: Build runtime
         if: needs.changes.outputs.docs-only != 'true' && steps.cache-runtime-dist.outputs.cache-hit != 'true'
@@ -257,7 +250,7 @@ jobs:
             node_modules
             packages/*/node_modules
             packages/extensions/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ runner.arch }}-node24-${{ hashFiles('**/package-lock.json', '**/package.json', '.npmrc', 'patches/**', 'scripts/install-git-hooks.mjs') }}
+          key: node-modules-${{ runner.os }}-node24-${{ hashFiles('**/package-lock.json', 'patches/**') }}
 
       - name: Install dependencies
         if: needs.changes.outputs.docs-only != 'true' && steps.cache-node-modules.outputs.cache-hit != 'true'

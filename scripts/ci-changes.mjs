@@ -1,9 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { classifyChanges } from './validation-inventory.mjs';
-// The build cache covers the entire tracked tree, including filesystem-read
-// inputs that import analysis cannot discover. Avoid hashing node_modules.
-const sourceTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
 let selection = { docsOnly: false, sandbox: true };
 try {
   const [base, head] = process.argv.slice(2);
@@ -19,4 +16,4 @@ try {
   selection = classifyChanges(files);
 } catch { /* Missing history or uncertain classifications run everything. */ }
 console.log(JSON.stringify(selection));
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `docs-only=${selection.docsOnly}\nsandbox=${selection.sandbox}\nsource-tree=${sourceTree}\n`);
+if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `docs-only=${selection.docsOnly}\nsandbox=${selection.sandbox}\n`);

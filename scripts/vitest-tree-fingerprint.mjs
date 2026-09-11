@@ -43,7 +43,15 @@ const IGNORED_DIRS = [
  * reporter's own output dirties the tree it just fingerprinted, making every
  * run read back as STALE.
  */
+/**
+ * Root-level archives of the local-only directory (`nimbalyst-local.zip`). They
+ * are untracked, never test inputs, and can run to hundreds of megabytes; every
+ * fingerprint reads each dirty path in full, twice per push.
+ */
+const LOCAL_ARCHIVE = /^nimbalyst-local\.[\w.]+$/;
+
 const isIgnored = (repoPath) =>
+  LOCAL_ARCHIVE.test(repoPath) ||
   IGNORED_DIRS.some(
     (dir) =>
       repoPath === dir || repoPath.startsWith(`${dir}/`) || repoPath.includes(`/${dir}/`),

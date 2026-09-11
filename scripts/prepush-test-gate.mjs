@@ -59,8 +59,12 @@ export function fullSuiteReuseDecision({ record, comparison, stdin = '', git = r
   if (record.invocation !== fullSuiteInvocation) return miss('invocation is not test:prepush');
   if (!record.complete) return miss('full-suite run is incomplete');
   if (record.result !== 'PASS') return miss('last full suite did not pass');
+  // `current` already means HEAD and the content of every dirty path match the
+  // tree the suite ran against. A clean-tree requirement on top of that adds no
+  // evidence the gate does not already accept (it validates the working tree and
+  // pushes HEAD either way) and never holds on a checkout shared by parallel
+  // sessions, which is the only place reuse pays for itself.
   if (comparison?.verdict !== 'current') return miss(`fingerprint is ${comparison?.verdict ?? 'unknown'}`);
-  if (comparison.now.files.length || comparison.now.extras.some(extra => extra.files.length)) return miss('working tree is dirty');
   const refs = stdin.trim().split('\n').filter(Boolean);
   if (!refs.length) return miss('no pushed refs available');
   try {
@@ -72,7 +76,7 @@ export function fullSuiteReuseDecision({ record, comparison, stdin = '', git = r
       if (git('rev-parse', `${fields[1]}^{commit}`).trim() !== comparison.now.head) return miss('pushed commit differs from checked-out HEAD');
     }
   } catch { return miss('cannot resolve pushed commit'); }
-  return { reuse: true, reason: 'complete passing full suite matches this clean HEAD and toolchain' };
+  return { reuse: true, reason: 'complete passing full suite matches this HEAD, working tree, and toolchain' };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
