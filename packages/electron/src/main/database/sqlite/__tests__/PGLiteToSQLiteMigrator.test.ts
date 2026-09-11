@@ -29,6 +29,34 @@ import {
 // Resolve to the shipping schema file.
 const SCHEMA_DIR = path.resolve(__dirname, '..', 'schemas');
 
+describe('PGLiteToSQLiteMigrator cutover whitelist', () => {
+  it('includes tool usage counters and backfill state in the cutover whitelist', () => {
+    expect(__TEST_HOOKS.COPY_TABLES).toEqual(
+      expect.arrayContaining([
+        'tool_usage_counters',
+        'tool_usage_backfill_meta',
+        'tool_usage_backfill_sessions',
+      ]),
+    );
+  });
+
+  // Omitting these silently drops every user's commit provenance on cutover.
+  it('includes the session commit ledger in the cutover whitelist', () => {
+    expect(__TEST_HOOKS.COPY_TABLES).toEqual(
+      expect.arrayContaining(['session_commits', 'session_commit_backfill_meta']),
+    );
+  });
+
+  it('preserves feedback request caches and indexes during backend cutover', () => {
+    expect(__TEST_HOOKS.COPY_TABLES).toEqual(expect.arrayContaining([
+      'feedback_request_cache',
+      'feedback_request_index',
+      'feedback_request_index_backfill',
+    ]));
+  });
+
+});
+
 describe('PGLiteToSQLiteMigrator', () => {
   let tmp: string;
   let pgliteDir: string;
@@ -59,31 +87,6 @@ describe('PGLiteToSQLiteMigrator', () => {
     await sqlite.close();
     await pglite.close();
     fs.rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it('includes tool usage counters and backfill state in the cutover whitelist', () => {
-    expect(__TEST_HOOKS.COPY_TABLES).toEqual(
-      expect.arrayContaining([
-        'tool_usage_counters',
-        'tool_usage_backfill_meta',
-        'tool_usage_backfill_sessions',
-      ]),
-    );
-  });
-
-  // Omitting these silently drops every user's commit provenance on cutover.
-  it('includes the session commit ledger in the cutover whitelist', () => {
-    expect(__TEST_HOOKS.COPY_TABLES).toEqual(
-      expect.arrayContaining(['session_commits', 'session_commit_backfill_meta']),
-    );
-  });
-
-  it('preserves feedback request caches and indexes during backend cutover', () => {
-    expect(__TEST_HOOKS.COPY_TABLES).toEqual(expect.arrayContaining([
-      'feedback_request_cache',
-      'feedback_request_index',
-      'feedback_request_index_backfill',
-    ]));
   });
 
   it('replaces the SQLite bootstrap backfill cutoff with the PGLite source cutoff', async () => {

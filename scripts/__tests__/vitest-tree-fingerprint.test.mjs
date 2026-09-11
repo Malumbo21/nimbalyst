@@ -110,3 +110,33 @@ test('an edit in a sibling checkout the suite tests reads as STALE', (t) => {
     ['sibling checkout changed since run'],
   );
 });
+
+test('toolchain changes invalidate the fingerprint and missing external inputs fail closed', (t) => {
+  const repo = makeRepo();
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const current = computeTreeFingerprint(repo, ENV);
+  for (const change of [{ nodeMajor: '999' }, { platform: 'other' }, { arch: 'other' }]) {
+    const old = computeTreeFingerprint(repo, ENV, [], { ...current.toolchain, ...change });
+    assert.equal(compareTreeFingerprint(old, repo, ENV).verdict, 'stale');
+  }
+  assert.equal(computeTreeFingerprint(repo, ENV, [path.join(repo, 'missing')]), null);
+});
+
+import { fullSuiteReuseDecision } from '../prepush-test-gate.mjs';
+import { fullSuiteInvocation } from '../validation-inventory.mjs';
+
+test('a real clean checkout reuses a full pass; source and lock edits cannot reuse it', (t) => {
+  const repo = makeRepo();
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+  const fingerprint = computeTreeFingerprint(repo, ENV);
+  const record = { invocation: fullSuiteInvocation, complete: true, result: 'PASS', fingerprint };
+  const decide = (value = record) => fullSuiteReuseDecision({ record: value, comparison: compareTreeFingerprint(value.fingerprint, repo, ENV),
+    stdin: `refs/heads/main ${fingerprint.head} refs/heads/main ${'0'.repeat(40)}`, git: (...args) => git(repo, ...args), ci: 'false' });
+  assert.equal(decide().reuse, true);
+  writeFileSync(path.join(repo, 'package-lock.json'), '{}');
+  assert.equal(decide().reuse, false);
+  assert.equal(decide({ ...record, fingerprint: computeTreeFingerprint(repo, ENV) }).reason, 'working tree is dirty');
+  rmSync(path.join(repo, 'package-lock.json'));
+  writeFileSync(path.join(repo, 'src.ts'), 'changed');
+  assert.equal(decide().reuse, false);
+});

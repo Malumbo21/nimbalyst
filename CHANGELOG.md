@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 <!-- Bug fixes go here -->
+- Accepting large document rewrites preserves paragraph order, and rejecting them restores the original formatting.
 - The GitHub panel no longer shows an unrelated AI session when the selected PR or issue has no matching session.
 - Open files recover from missed disk changes without reloading the app, preserve unsaved edits, and refuse saves when the disk version cannot be verified.
 - Slash-command search ranks exact matches first, then prefixes, with alphabetical ordering among equally relevant matches.

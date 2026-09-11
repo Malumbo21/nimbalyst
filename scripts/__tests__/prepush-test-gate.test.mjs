@@ -51,3 +51,30 @@ test('never waves a push through on missing refs or a failing git', () => {
     false
   );
 });
+
+import { fullSuiteReuseDecision } from '../prepush-test-gate.mjs';
+import { fullSuiteInvocation } from '../validation-inventory.mjs';
+
+test('reuses only complete passing matching clean HEAD results; all uncertainty runs the suite', () => {
+  const sha = 'a'.repeat(40);
+  const good = {
+    record: { invocation: fullSuiteInvocation, complete: true, result: 'PASS' },
+    comparison: { verdict: 'current', now: { head: sha, files: [], extras: [] } },
+    stdin: `refs/heads/main ${sha} refs/heads/main ${'b'.repeat(40)}`,
+    git: () => sha,
+    ci: 'false',
+  };
+  assert.equal(fullSuiteReuseDecision(good).reuse, true);
+  for (const overrides of [
+    { record: null },
+    { record: { ...good.record, invocation: 'run one.test.ts' } },
+    { record: { ...good.record, complete: false } },
+    { record: { ...good.record, result: 'FAIL' } },
+    { comparison: { verdict: 'stale' } },
+    { comparison: { verdict: 'unknown' } },
+    { comparison: { ...good.comparison, now: { ...good.comparison.now, files: [{ path: 'dirty.ts' }] } } },
+    { stdin: '' }, { stdin: 'malformed' }, { git: () => 'b'.repeat(40) },
+    { git: () => { throw new Error('unavailable'); } }, { ci: 'true' },
+  ]) assert.equal(fullSuiteReuseDecision({ ...good, ...overrides }).reuse, false, JSON.stringify(overrides));
+  assert.equal(fullSuiteReuseDecision({ ...good, stdin: `${good.stdin}\nrefs/tags/v1 ${'c'.repeat(40)} refs/tags/v1 ${'0'.repeat(40)}` }).reuse, true);
+});

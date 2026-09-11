@@ -16,6 +16,8 @@ import {
 
 const repoRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
+const sourceEvents = collectEventNames();
+
 const lists = () => {
   const l = readLists();
   return {
@@ -29,7 +31,7 @@ const lists = () => {
 };
 
 test('every event name in source is classified', () => {
-  assert.deepEqual(findClassificationErrors(collectEventNames(), readLists()), []);
+  assert.deepEqual(findClassificationErrors(sourceEvents, readLists()), []);
 });
 
 test('object captures are detected without treating event parameter types as analytics', () => {
@@ -46,7 +48,7 @@ test('object captures are detected without treating event parameter types as ana
 
 /** Source scan plus one synthetic name, so only that name can be the new error. */
 const foundPlus = (name) => {
-  const found = collectEventNames();
+  const found = new Map(sourceEvents);
   found.set(name, 'some/file.ts');
   return found;
 };
@@ -70,7 +72,7 @@ test('a name classified twice fails the check', () => {
 test('an allow-listed name no longer emitted anywhere fails the check', () => {
   const l = lists();
   l.always.add('deleted_but_still_allow_listed');
-  const errors = about(findClassificationErrors(collectEventNames(), l), 'deleted_but_still_allow_listed');
+  const errors = about(findClassificationErrors(sourceEvents, l), 'deleted_but_still_allow_listed');
   assert.equal(errors.length, 1);
   assert.match(errors[0], /no longer emitted/);
 });
@@ -82,7 +84,7 @@ test('an allow-listed name no longer emitted anywhere fails the check', () => {
  * this gate reported OK. Each seam below is the only one that finds its event.
  */
 test('the scan reaches events emitted through wrappers and schema maps', () => {
-  const found = collectEventNames();
+  const found = new Map(sourceEvents);
   for (const name of [
     'create_ai_session', // validateSessionLaunchEvent(...) wrapper
     'ai_message_submit_attempted', // SEND_WALL_EVENT_SCHEMAS key
