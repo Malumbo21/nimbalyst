@@ -1,12 +1,19 @@
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
+  INIT_CONFIG_FILE,
+  checkInitConfigDisables,
   collectEventNames,
   findClassificationErrors,
   parseList,
   readLists,
 } from '../check-analytics-allowlist.mjs';
+
+const repoRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 
 const lists = () => {
   const l = readLists();
@@ -16,6 +23,7 @@ const lists = () => {
     conditional: new Set(l.conditional),
     dropped: new Set(l.dropped),
     sdkOwned: new Set(l.sdkOwned),
+    sdkDisabled: new Set(l.sdkDisabled),
   };
 };
 
@@ -102,6 +110,38 @@ test('$set is conditional, not dropped, because the signup email rides on it', (
   const { conditional, dropped } = readLists();
   assert.ok(conditional.has('$set'), '$set is kept when it carries an email');
   assert.ok(!dropped.has('$set'));
+});
+
+/**
+ * `$pageview` was switched off in `posthog.init` and left off the transformation
+ * on the same day, which blanked the saved "Users by Version over Time" insight
+ * with no error anywhere. A name with no call site is invisible to every other
+ * check here, so the config is the only thing left to assert on.
+ */
+test('a re-enabled SDK capture fails the check', () => {
+  const { sdkDisabled } = readLists();
+  assert.ok(sdkDisabled.has('$pageview'));
+
+  const errors = checkInitConfigDisables(
+    'capture_pageview: true,\ncapture_pageleave: false,\nautocapture: false,',
+    sdkDisabled,
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /no longer sets `capture_pageview: false`/);
+});
+
+test('the real init config still disables every SDK capture we dropped', () => {
+  const { sdkDisabled } = readLists();
+  const src = readFileSync(join(repoRoot, INIT_CONFIG_FILE), 'utf8');
+  assert.deepEqual(checkInitConfigDisables(src, sdkDisabled), []);
+});
+
+test('an SDK-disabled name with no config key to check fails loudly', () => {
+  // Adding a name to the list without saying which option turns it off would
+  // otherwise produce a list entry that verifies nothing.
+  const errors = checkInitConfigDisables('', new Set(['$heatmaps']));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /no entry in INIT_CONFIG_KEY/);
 });
 
 test('the sampled panel is documented as a fraction that must be scaled', () => {

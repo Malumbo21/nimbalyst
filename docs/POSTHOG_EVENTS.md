@@ -601,6 +601,19 @@ If an event you expected is missing, check the transformation before you debug t
 
 Both seams are now scanned (`SCHEMA_MAP_FILES` in the gate). **If you add a new schema map keyed by event name, or a new wrapper that takes the name as a string literal, add it to the gate in the same commit** — otherwise the gate's failure mode is silence, not a red build. All four are currently classified `INTENTIONALLY_DROPPED` because that is what is factually happening; promote any of them if the data is wanted.
 
+#### An SDK-default capture can be killed twice and reported nowhere
+
+`$pageview`, `$pageleave` and `$autocapture` come from the PostHog SDK's own defaults, so they have no call site and the scan above can never find them. On 2026-09-04 they were switched off in two independent places on the same day — `capture_pageview: false` in the renderer's `posthog.init` (commit `0dda71958`), and omission from the `Cost control allow-list` transformation. Either alone would have been enough.
+
+That blanked the saved **Users by Version over Time** insight, which counted `$pageview` DAU broken down by `nimbalyst_version`. The last `$pageview` landed 2026-09-04 13:00 ET and the report showed nothing for five days. The commit's stated rationale was "241,643 events in 30 days that nothing consumed" — the consumer existed, nobody checked for it.
+
+Two things came out of this:
+
+- The report now reads `daily_active`, which is a better basis anyway: unsampled, one per install per local day, emitted only when a human is present, and carrying `nimbalyst_version` on 100% of events. Its history starts 2026-09-09 and coverage ramps as installs update, so a companion insight on the sampled `nimbalyst_session_start` (×8) carries version *share* across the break.
+- `SDK_DISABLED_AT_CLIENT` in the mirror names these captures explicitly, and `checkInitConfigDisables` in the gate asserts the renderer still sets each one to `false`. Re-enabling one is now a deliberate edit in two places.
+
+**Before switching off an SDK-default capture, search the PostHog project for saved insights built on it.** A name with no call site in this repo can still be load-bearing for a dashboard.
+
 ### `update_toast_shown` is currently unreachable in production
 
 Verified 2026-09-04. The renderer only emits it from the `update-toast:show-available` handler, and the sole sender of that channel is inside the `NODE_ENV === 'test' || PLAYWRIGHT === '1'` block at the bottom of `autoUpdater.ts`. In production the "Update Available" toast was deliberately removed (per maintainer direction on #327, `autoDownload = true` means only the "Ready to install" toast is shown), and nothing in the renderer listens to the production `update-available` broadcast at all.

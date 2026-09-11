@@ -50,6 +50,18 @@ const EVENT_KEY = /\bevent:\s*["']([a-z$][a-z0-9_$]*)["']/g;
 
 export const TEAM_SCHEMA_FILE = 'packages/electron/src/shared/analytics/teamAnalytics.ts';
 export const ALLOW_LIST_FILE = 'packages/electron/src/shared/analytics/posthogIngestAllowList.ts';
+export const INIT_CONFIG_FILE = 'packages/electron/src/renderer/index.tsx';
+
+/**
+ * `posthog.init` option that turns each SDK-default capture off, for the names
+ * in SDK_DISABLED_AT_CLIENT. These have no call site, so nothing else in this
+ * gate can see them.
+ */
+export const INIT_CONFIG_KEY = {
+  $pageview: 'capture_pageview',
+  $pageleave: 'capture_pageleave',
+  $autocapture: 'autocapture',
+};
 
 /**
  * Schema maps whose KEYS are event names. These never reach a literal emission
@@ -139,14 +151,16 @@ export function collectEventNames() {
 
 /**
  * Pure classification step: returns one message per problem, empty when clean.
- * `found` is a Map of name -> where; `lists` holds the five Sets.
+ * `found` is a Map of name -> where; `lists` holds the six Sets.
  */
 export function findClassificationErrors(found, lists) {
-  const { always, sampled, conditional, dropped, sdkOwned } = lists;
+  const { always, sampled, conditional, dropped, sdkOwned, sdkDisabled } = lists;
   const errors = [];
 
   for (const [name, where] of [...found].sort()) {
-    const count = [always, sampled, conditional, dropped, sdkOwned].filter((s) => s.has(name)).length;
+    const count = [always, sampled, conditional, dropped, sdkOwned, sdkDisabled].filter((s) =>
+      s.has(name),
+    ).length;
     if (count === 0) {
       errors.push(
         `  ${name}\n    first seen: ${where}\n` +
@@ -183,7 +197,43 @@ export function readLists() {
     conditional: parseList(src, 'INGESTED_CONDITIONALLY'),
     dropped: parseList(src, 'INTENTIONALLY_DROPPED'),
     sdkOwned: parseList(src, 'SDK_OWNED'),
+    sdkDisabled: parseList(src, 'SDK_DISABLED_AT_CLIENT'),
   };
+}
+
+/**
+ * Assert the renderer still switches off every name in SDK_DISABLED_AT_CLIENT.
+ *
+ * The rest of this gate reasons about names it can find at a call site. These
+ * have none -- the SDK emits them from its own defaults -- so the only evidence
+ * that they are off is the `posthog.init` config, and the only cost of them
+ * coming back on is a bill. `$pageview` alone was 241,643 events in 30 days
+ * against a 1M/month free tier.
+ *
+ * Pure over the config source so a test does not need the real file.
+ */
+export function checkInitConfigDisables(configSrc, sdkDisabled) {
+  const errors = [];
+  for (const name of [...sdkDisabled].sort()) {
+    const key = INIT_CONFIG_KEY[name];
+    if (!key) {
+      errors.push(
+        `  ${name}\n    -> In SDK_DISABLED_AT_CLIENT but has no entry in INIT_CONFIG_KEY,\n` +
+          `       so nothing verifies it is actually off. Add the posthog.init option name.`,
+      );
+      continue;
+    }
+    if (!new RegExp(`\\b${key}\\s*:\\s*false\\b`).test(configSrc)) {
+      errors.push(
+        `  ${name}\n    -> ${INIT_CONFIG_FILE} no longer sets \`${key}: false\`.\n` +
+          `       This name is on neither the PostHog allow-list nor any call site, so\n` +
+          `       re-enabling capture ships volume that is then discarded at ingestion.\n` +
+          `       If you want the data, add ${name} to the 'Cost control allow-list'\n` +
+          `       transformation in project 234047 and move it out of SDK_DISABLED_AT_CLIENT.`,
+      );
+    }
+  }
+  return errors;
 }
 
 function main() {
@@ -194,7 +244,11 @@ function main() {
     return;
   }
 
-  const errors = findClassificationErrors(found, readLists());
+  const lists = readLists();
+  const errors = [
+    ...findClassificationErrors(found, lists),
+    ...checkInitConfigDisables(readFileSync(join(repoRoot, INIT_CONFIG_FILE), 'utf8'), lists.sdkDisabled),
+  ];
 
   if (errors.length) {
     console.error(`\nAnalytics allow-list check failed (${errors.length} issue(s)):\n`);

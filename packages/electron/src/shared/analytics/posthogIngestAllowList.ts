@@ -151,6 +151,38 @@ export const SDK_OWNED = [
 ] as const;
 
 /**
+ * SDK-emitted names we switched OFF in `posthog.init`, so they are neither
+ * captured by the client nor kept by the transformation.
+ *
+ * These are the blind spot in every other list here. They have no call site, so
+ * the gate cannot find them; they are not `SDK_OWNED`, because that list means
+ * "emitted and kept"; and they are not `INTENTIONALLY_DROPPED`, because that
+ * list means "still emitted, discarded server-side". A name that is off in both
+ * places appears nowhere at all, which is exactly what happened to `$pageview`.
+ *
+ * `$pageview` had a consumer -- the saved "Users by Version over Time" insight,
+ * which counted `$pageview` DAU by `nimbalyst_version`. Turning capture off in
+ * the renderer and omitting the name from the transformation on the same day
+ * blanked that report, and nothing anywhere said so. It now reads the
+ * `daily_active` heartbeat instead, which is a better basis: unsampled, one per
+ * install per local day, and only when a human is present.
+ *
+ * Before switching an SDK-default capture off, search the PostHog project for
+ * saved insights built on it. A name with no call site in this repo can still
+ * be load-bearing for somebody's dashboard.
+ *
+ * `checkInitConfigDisables` in `scripts/check-analytics-allowlist.mjs` asserts
+ * the renderer still sets each of these to `false`, so re-enabling one is a
+ * deliberate edit in two places rather than a silent return of ~240k
+ * events/month against a 1M/month free tier.
+ */
+export const SDK_DISABLED_AT_CLIENT = [
+  '$pageview',
+  '$pageleave',
+  '$autocapture',
+] as const;
+
+/**
  * Emitted by our code and deliberately discarded at ingestion.
  *
  * These are not dead code -- the call sites still run, they just produce no
