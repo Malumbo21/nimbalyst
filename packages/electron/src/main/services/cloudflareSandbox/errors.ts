@@ -49,6 +49,14 @@ const MESSAGES: Record<CloudflareSandboxErrorCode, string> = {
     "This action needs an explicit confirmation before it can run.",
   "container-unavailable":
     "The sandbox is deployed, but its container could not be reached.",
+  // The container's filesystem is ephemeral, so this is the ordinary state
+  // after an idle sleep rather than a fault. The message says what to do.
+  "node-not-provisioned":
+    "This sandbox has no agent node in it. Connect the node again. The container discards its files whenever it sleeps.",
+  "node-start-failed":
+    "The agent node could not start in this sandbox. Check its recent output and try connecting again.",
+  "grant-failed":
+    "Nimbalyst could not authorize this sandbox with the sync server, so the node was not started.",
   unknown: "Something went wrong talking to Wrangler.",
 };
 

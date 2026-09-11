@@ -37,6 +37,13 @@
  *    second window holding a stale selection must fail with `deployment-stale`
  *    rather than act on another account's sandbox.
  *
+ * 5. The headless node running *inside* the container is a third fact, separate
+ *    from both. `SandboxDeployment.node` describes a `nimbalyst-node` process
+ *    the desktop provisioned and started; a warm container with no node is
+ *    normal (the container sleeps on idle and everything written into it is
+ *    discarded, so a node has to be provisioned again afterwards). Nothing may
+ *    read a running container as a connected node.
+ *
  * Channel names are `cloudflare-sandbox:*`; every handler resolves with
  * `CloudflareSandboxResponse<T>` rather than rejecting, so the panel can
  * render an actionable message instead of an unhandled rejection.
@@ -53,6 +60,10 @@ export const CLOUDFLARE_SANDBOX_CHANNELS = {
   wake: 'cloudflare-sandbox:wake',
   stop: 'cloudflare-sandbox:stop',
   deleteDeployment: 'cloudflare-sandbox:delete-deployment',
+  connectNode: 'cloudflare-sandbox:connect-node',
+  nodeStatus: 'cloudflare-sandbox:node-status',
+  disconnectNode: 'cloudflare-sandbox:disconnect-node',
+  startRemoteSession: 'cloudflare-sandbox:start-remote-session',
 } as const;
 
 export type CloudflareSandboxChannel =
@@ -81,6 +92,16 @@ export type CloudflareSandboxErrorCode =
   | 'confirmation-required'
   /** The deployment exists but its container could not be reached. */
   | 'container-unavailable'
+  /**
+   * A node operation was asked for on a container that has no node
+   * configuration in it. Expected after the container sleeps: its filesystem is
+   * ephemeral, so the answer is to connect the node again, not to retry.
+   */
+  | 'node-not-provisioned'
+  /** The node configuration is in place but the process would not start. */
+  | 'node-start-failed'
+  /** The device-authorization grant against the sync server did not complete. */
+  | 'grant-failed'
   | 'unknown';
 
 export interface CloudflareSandboxError {
@@ -255,6 +276,52 @@ export interface SandboxContainerState {
  */
 export type SandboxAccessKind = 'private-rpc' | 'public-url';
 
+/**
+ * The repository checkout the node was told about, echoed back for the UI.
+ *
+ * Deliberately no `repoUrl`. The remote is needed to provision and to build the
+ * egress allowlist, but it is not needed to render this and it is not kept on
+ * disk: it can carry a host and an org the user would not expect a settings
+ * file to name.
+ */
+export interface SandboxNodeWorkspace {
+  /** The desktop workspace path. Doubles as the sync `projectId`. */
+  projectId: string;
+  branch: string;
+}
+
+/**
+ * The `nimbalyst-node` process inside the container.
+ *
+ * The two halves have different lifetimes and different storage:
+ *
+ *  - `nodeId`, `deviceId`, `provisionedAt`, `workspace` are what this desktop
+ *    provisioned. They are persisted, because `nodeId` is the only way to
+ *    revoke the credential and it has to survive a restart.
+ *  - `running`, `processId`, `startedAt`, `exitCode`, `recentLog` are a live
+ *    observation of the container. They are **never persisted** — a stored
+ *    observation is a claim that goes stale the moment the container sleeps,
+ *    and `recentLog` is process output that has no business on the user's disk.
+ *    Unobserved, they read as a node that is not running, which is what a
+ *    sandbox that has slept actually holds.
+ */
+export interface SandboxNodeState {
+  running: boolean;
+  processId: string | null;
+  /** Epoch milliseconds, as reported by the container. */
+  startedAt: number | null;
+  exitCode: number | null;
+  /** Bounded, redacted tail of the node's own output. Transient. */
+  recentLog: string;
+  /** Device-grant node id on the sync server; needed to revoke the credential. */
+  nodeId: string | null;
+  /** Sync device id the node announces itself under, chosen by this desktop. */
+  deviceId: string | null;
+  /** ISO-8601 of the last successful provision from this desktop. */
+  provisionedAt: string | null;
+  workspace: SandboxNodeWorkspace | null;
+}
+
 export interface SandboxDeployment {
   /** Stable id for this deployment; required by every lifecycle request. */
   deploymentId: string;
@@ -262,6 +329,11 @@ export interface SandboxDeployment {
   revision: string;
   status: SandboxDeploymentStatus;
   container: SandboxContainerState;
+  /**
+   * Null when no node has ever been connected from this desktop. A non-null
+   * value with `running: false` is the normal state after the container slept.
+   */
+  node: SandboxNodeState | null;
   profileName: string;
   account: CloudflareAccount;
   access: SandboxAccessKind;
@@ -306,6 +378,56 @@ export interface DeleteDeploymentRequest extends SandboxDeploymentTarget {
   confirmed: true;
 }
 
+// ---------------------------------------------------------------------------
+// Headless node
+// ---------------------------------------------------------------------------
+
+/**
+ * Provision and start the node.
+ *
+ * Deliberately one request rather than a provision step and a start step: the
+ * container's filesystem is ephemeral, so a provision that is not immediately
+ * followed by a start leaves nothing durable behind and the UI would be
+ * offering the user a state that evaporates.
+ *
+ * `workspacePath` names the desktop workspace whose git remote and branch the
+ * node clones. It is passed explicitly — there is no "current workspace" on the
+ * main side of this channel.
+ */
+export interface ConnectNodeRequest extends SandboxDeploymentTarget {
+  workspacePath: string;
+}
+
+export type NodeStatusRequest = SandboxDeploymentTarget;
+
+export interface DisconnectNodeRequest extends SandboxDeploymentTarget {
+  /**
+   * Must be true. Disconnecting stops the agent process and discards the
+   * container's filesystem, including anything a running session wrote and had
+   * not pushed. The renderer sets this only after showing that warning.
+   */
+  discardEphemeralData: true;
+}
+
+/**
+ * Ask the connected node to create a session and run a prompt.
+ *
+ * The request is device-targeted at the node, so no other device — including
+ * this desktop — executes it.
+ */
+export interface StartRemoteSessionRequest extends SandboxDeploymentTarget {
+  /** Must match the workspace the node was provisioned with. */
+  workspacePath: string;
+  prompt: string;
+}
+
+export interface StartRemoteSessionResult {
+  /** Correlation id of the create-session request that was sent. */
+  requestId: string;
+  /** Session id the node reported creating. */
+  sessionId: string;
+}
+
 /** Typed view of the invoke surface; the preload `invoke` itself is untyped. */
 export interface CloudflareSandboxApi {
   getPrerequisites(): Promise<CloudflareSandboxResponse<CloudflareSandboxPrerequisites>>;
@@ -327,4 +449,12 @@ export interface CloudflareSandboxApi {
   deleteDeployment(
     request: DeleteDeploymentRequest,
   ): Promise<CloudflareSandboxResponse<SandboxDeployment | null>>;
+  connectNode(request: ConnectNodeRequest): Promise<CloudflareSandboxResponse<SandboxDeployment>>;
+  nodeStatus(request: NodeStatusRequest): Promise<CloudflareSandboxResponse<SandboxDeployment>>;
+  disconnectNode(
+    request: DisconnectNodeRequest,
+  ): Promise<CloudflareSandboxResponse<SandboxDeployment>>;
+  startRemoteSession(
+    request: StartRemoteSessionRequest,
+  ): Promise<CloudflareSandboxResponse<StartRemoteSessionResult>>;
 }

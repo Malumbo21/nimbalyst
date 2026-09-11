@@ -6,9 +6,9 @@ import { isRetainedSession, sessionActivityAt, SESSION_TRANSCRIPT_TTL_MS } from 
  * Uses WebSocket connections to Durable Objects with DO SQLite storage.
  *
  * Authentication:
- * - Uses Stytch session JWTs for all WebSocket connections
- * - User ID is extracted from the JWT 'sub' claim
- * - JWT is sent in the Authorization header (with protocol workaround for WebSocket)
+ * - Uses personal Stytch JWTs or personal node access tokens
+ * - User ID is extracted from the credential's 'sub' claim
+ * - Credential is sent via the WebSocket URL's token query parameter
  *
  * Key differences from Y.js sync (CollabV2):
  * - Simple append-only message protocol (no CRDTs)
@@ -21,6 +21,7 @@ import type { AgentMessage } from '../ai/server/types';
 import type { PersonalJwt, PersonalMemberId } from '../auth/jwtScopes';
 import { shouldSyncMessageForSessionRoom, truncateContentForSync } from './syncContentTruncator';
 import { appendSyncClientParams, redactSyncUrl } from './syncClientInfo';
+import { decodeNodeAccessTokenClaims, isNodeAccessToken } from './nodeCredentialToken';
 import { buildSyncedSessionIndexFields } from './sessionIndexEntryFields';
 import { resolveIndexSortTimestamp } from './sessionSortTimestamp';
 import {
@@ -66,6 +67,7 @@ import type {
   FileIndexData,
   MobilePushOptions,
   MobilePushResult,
+  PushChangeOutcome,
 } from './types';
 import { filterSessionsForPersonalSync } from './types';
 import type { FleetActivitySnapshot, PushRejectionCause } from '@nimbalyst/collab-protocol';
@@ -110,6 +112,7 @@ interface EncryptedMessage {
 
 /** Encrypted queued prompt for wire protocol */
 interface EncryptedQueuedPrompt {
+  options?: import("./types").RemoteTurnOptions;
   id: string;
   /** Encrypted prompt text (base64) */
   encryptedPrompt: string;
@@ -137,6 +140,7 @@ interface WireEncryptedAttachment {
 
 /** Plaintext queued prompt (after decryption) */
 interface PlaintextQueuedPrompt {
+  options?: import("./types").RemoteTurnOptions;
   id: string;
   prompt: string;
   timestamp: number;
@@ -499,6 +503,8 @@ type ServerMessage =
 
 interface JwtClaims {
   sub: string;
+  /** Node access-token expiry in UNIX seconds; Stytch refresh is owned by getJwt. */
+  exp?: number;
   /** Stytch B2B organization_id claim. Personal-scoped JWTs carry the personal orgId; team-scoped JWTs carry the team orgId. */
   organization_id?: string;
 }
@@ -508,6 +514,10 @@ interface JwtClaims {
  * The JWT is a base64url encoded string in the format: header.payload.signature
  */
 function decodeJwtClaims(jwt: PersonalJwt): JwtClaims {
+  if (isNodeAccessToken(jwt)) {
+    const { sub, org, exp } = decodeNodeAccessTokenClaims(jwt);
+    return { sub, organization_id: org, exp };
+  }
   try {
     const parts = jwt.split('.');
     if (parts.length !== 3) {
@@ -643,6 +653,8 @@ async function encryptQueuedPrompts(
         encryptedPrompt: encrypted,
         iv,
         timestamp: prompt.timestamp,
+        ...(prompt.attachments?.length ? { encryptedAttachments: prompt.attachments } : {}),
+        ...(prompt.options ? {options: prompt.options} : {}),
       };
     })
   );
@@ -664,6 +676,7 @@ async function decryptQueuedPrompts(
         prompt: decryptedPrompt,
         timestamp: prompt.timestamp,
       };
+      if (prompt.options) result.options = prompt.options;
       // Pass through encrypted attachments (desktop decrypts them when processing)
       if (prompt.encryptedAttachments && prompt.encryptedAttachments.length > 0) {
         result.attachments = prompt.encryptedAttachments;
@@ -1229,6 +1242,13 @@ interface SessionConnection {
   cachedMetadata?: Partial<SessionMetadata>;
   /** Timestamp of last activity (send/receive) for LRU eviction */
   lastActivity: number;
+  /** A node socket retains its opening credential even after index rotation. */
+  nodeCredentialExpiresAt?: number;
+}
+
+function sessionTransportUsable(session: SessionConnection | undefined): session is SessionConnection {
+  return !!session?.status.connected && session.ws.readyState === WS_OPEN
+    && (session.nodeCredentialExpiresAt === undefined || session.nodeCredentialExpiresAt > Date.now() + 30_000);
 }
 
 // Only a genuinely terminal room state disables a session's message sync. The
@@ -1357,9 +1377,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   // Uses config.personalMemberId as the authoritative room routing ID.
   // The JWT sub claim is validated against config.personalMemberId -- if they differ,
   // the JWT is from a different org (e.g., team) and the caller's getJwt()
-  // should be returning a personal-org-scoped JWT. Log a warning so the
-  // mismatch is visible but still use config.personalMemberId for routing to ensure
-  // desktop and mobile always connect to the same index room.
+  // should be returning a personal-org-scoped credential. Refuse mismatches
+  // before connecting so desktop and mobile cannot route to different rooms.
   async function ensureFreshJwt(): Promise<{ jwt: PersonalJwt; personalMemberId: PersonalMemberId }> {
     const jwt = await config.getJwt();
     const claims = decodeJwtClaims(jwt);
@@ -1399,6 +1418,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       (err as any).code = 'AUTH_MISMATCH';
       throw err;
     }
+    if (claims.exp !== undefined && Date.now() >= claims.exp * 1000) {
+      throw new Error('CollabV3 node access token expired; getJwt must refresh it before connecting');
+    }
     currentPersonalMemberId = config.personalMemberId;
     return { jwt, personalMemberId: currentPersonalMemberId };
   }
@@ -1415,6 +1437,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   }
 
   const sessions = new Map<string, SessionConnection>();
+  const sessionConnectionsInFlight = new Map<string, Promise<void>>();
+  const sessionStatusListeners = new Map<string, Set<(status: SyncStatus) => void>>();
+  const sessionChangeListeners = new Map<string, Set<(change: SessionChange) => void>>();
   const sessionIndexCache = new Map<string, CachedSessionIndex>();
   /**
    * Connection-scoped record of what the server is believed to hold for each
@@ -1510,6 +1535,16 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
    */
   let indexReady = false;
   let indexReadyListeners = new Set<() => void>();
+  /**
+   * Persistent subscribers to "the index socket is usable again".
+   *
+   * Distinct from `indexReadyListeners`, which is one-shot and cleared on every
+   * fire because it backs `waitForIndexReady()`. These survive, because the
+   * thing they exist for -- retrying work that could not be sent on the socket
+   * that just went away -- has to happen on EVERY reconnect, not on the one the
+   * caller happened to be awaiting.
+   */
+  const connectionGenerationListeners = new Set<(generation: number) => void>();
   const INDEX_STABILITY_MS = 500;
   let indexStabilityTimer: ReturnType<typeof setTimeout> | null = null;
   let deviceAnnounceInterval: ReturnType<typeof setInterval> | null = null;
@@ -1560,6 +1595,17 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         cb();
       } catch (err) {
         console.error('[CollabV3] indexReady listener threw:', err);
+      }
+    }
+
+    // A usable socket under the current generation. Fired here rather than at
+    // the disconnect that bumped the counter, because this is the moment at
+    // which a caller retrying withheld work can actually succeed.
+    for (const cb of Array.from(connectionGenerationListeners)) {
+      try {
+        cb(indexConnectionGeneration);
+      } catch (err) {
+        console.error('[CollabV3] connectionGeneration listener threw:', err);
       }
     }
   }
@@ -2592,7 +2638,10 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     const parsed = JSON.parse(decrypted);
 
     return {
-      id: parseInt(encrypted.id, 10) || 0,
+      // Wire IDs are opaque hashes or provider UUIDs, not local row numbers.
+      // The room's sequence is numeric and stable across history and replay.
+      id: encrypted.sequence,
+      providerMessageId: encrypted.id,
       sessionId: '', // Filled in by caller
       source: encrypted.source,
       direction: encrypted.direction,
@@ -3142,6 +3191,12 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             // Another device (mobile) requested session creation
             const ourDeviceId = localDeviceId();
             if (message.targetDeviceId && message.targetDeviceId !== ourDeviceId) break;
+            // Captured BEFORE the decryption awaits below. The server binds this
+            // claim to the socket that delivered the broadcast, and a listener
+            // that samples the generation after the await reads whatever socket
+            // exists by then -- so a disconnect mid-decrypt looks, from the
+            // listener's side, like a claim it still holds.
+            const receiptGeneration = indexConnectionGeneration;
             // Decrypt projectId - required for encrypted wire protocol
             let projectId: string;
             if (message.request.encryptedProjectId && message.request.projectIdIv && config.encryptionKey) {
@@ -3176,6 +3231,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
               agentRole: message.request.agentRole,
               targetDeviceId: message.targetDeviceId,
               timestamp: message.request.timestamp,
+              receiptGeneration,
             };
 
             // Notify all listeners (desktop will handle this)
@@ -4002,6 +4058,13 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
   // Create provider object
   const provider: SyncProvider = {
     async connect(sessionId: string): Promise<void> {
+      const pending = sessionConnectionsInFlight.get(sessionId);
+      if (pending) return pending;
+      const existing = sessions.get(sessionId);
+      if (existing && !sessionTransportUsable(existing)) this.disconnect(sessionId);
+      // Register the promise before auth or socket creation can yield. Every
+      // caller must wait for OPEN, including a message racing session creation.
+      const attempt = Promise.resolve().then(async () => {
       if (isMessageSyncDisabled(sessionId)) return;
       // Track this session as wanted so we re-subscribe after reconnects.
       // Do this before the short-circuit so callers resubscribing an already-connected
@@ -4076,29 +4139,35 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
       }
 
       const roomId = getRoomId(sessionId);
+      if (sessionConnectionsInFlight.get(sessionId) !== attempt) {
+        throw new Error('Session connection was cancelled');
+      }
       const url = getWebSocketUrl(roomId);
       // Pass JWT via query parameter (WebSocket doesn't support custom headers in browsers)
       const wsUrl = appendSyncClientParams(`${url}?token=${encodeURIComponent(jwt)}`);
 
-      return new Promise((resolve, reject) => {
+      return new Promise<void>((resolve, reject) => {
         const ws = openWebSocket(wsUrl);
 
         const session: SessionConnection = {
           ws,
           status: createInitialStatus(),
-          statusListeners: new Set(),
-          changeListeners: new Set(),
+          statusListeners: sessionStatusListeners.get(sessionId) ?? new Set(),
+          changeListeners: sessionChangeListeners.get(sessionId) ?? new Set(),
           lastSequence: 0,
           encryptionKey: config.encryptionKey,
           lastActivity: Date.now(),
+          nodeCredentialExpiresAt: isNodeAccessToken(jwt) ? decodeNodeAccessTokenClaims(jwt).exp * 1000 : undefined,
         };
 
         sessions.set(sessionId, session);
+        sessionStatusListeners.set(sessionId, session.statusListeners);
+        sessionChangeListeners.set(sessionId, session.changeListeners);
 
         const timeout = setTimeout(() => {
           reject(new Error('Connection timeout'));
           ws.close();
-          sessions.delete(sessionId);
+          if (sessions.get(sessionId) === session) sessions.delete(sessionId);
         }, 10000);
 
         ws.onopen = () => {
@@ -4113,6 +4182,9 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         };
 
         ws.onclose = (event: CloseEvent) => {
+          clearTimeout(timeout);
+          reject(new Error('Session connection closed before opening'));
+          if (sessions.get(sessionId) !== session) return;
           // Auth rejections (expired/invalid JWT) arrive here as a close
           // frame, not as an error event. Logging code/reason makes the
           // root cause visible the next time something goes wrong.
@@ -4121,6 +4193,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           );
           updateStatus(sessionId, { connected: false });
           sessions.delete(sessionId);
+          if (!session.statusListeners.size) sessionStatusListeners.delete(sessionId);
+          if (!session.changeListeners.size) sessionChangeListeners.delete(sessionId);
         };
 
         ws.onerror = (event) => {
@@ -4140,12 +4214,19 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           handleServerMessage(sessionId, event.data);
         };
       });
+      });
+      sessionConnectionsInFlight.set(sessionId, attempt);
+      try { await attempt; }
+      finally {
+        if (sessionConnectionsInFlight.get(sessionId) === attempt) sessionConnectionsInFlight.delete(sessionId);
+      }
     },
 
     disconnect(sessionId: string): void {
       // Caller explicitly no longer wants this session -- drop intent so it
       // isn't resubscribed on the next index reconnect.
       wantedSessions.delete(sessionId);
+      sessionConnectionsInFlight.delete(sessionId);
       const session = sessions.get(sessionId);
       if (!session) return;
 
@@ -4155,9 +4236,12 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
     disconnectAll(): void {
       wantedSessions.clear();
+      sessionConnectionsInFlight.clear();
       for (const sessionId of sessions.keys()) {
         this.disconnect(sessionId);
       }
+      sessionStatusListeners.clear();
+      sessionChangeListeners.clear();
 
       if (indexReconnectTimer) {
         clearTimeout(indexReconnectTimer);
@@ -4187,8 +4271,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     },
 
     isConnected(sessionId: string): boolean {
-      const session = sessions.get(sessionId);
-      return session?.status.connected ?? false;
+      return sessionTransportUsable(sessions.get(sessionId));
     },
 
     isAuthMismatched(): boolean {
@@ -4201,25 +4284,37 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
     },
 
     onStatusChange(sessionId: string, callback: (status: SyncStatus) => void): () => void {
-      const session = sessions.get(sessionId);
-      if (!session) return () => {};
-
-      session.statusListeners.add(callback);
-      return () => session.statusListeners.delete(callback);
+      const listeners = sessionStatusListeners.get(sessionId) ?? new Set();
+      sessionStatusListeners.set(sessionId, listeners);
+      listeners.add(callback);
+      return () => {
+        listeners.delete(callback);
+        if (!listeners.size && !sessions.has(sessionId)) sessionStatusListeners.delete(sessionId);
+      };
     },
 
     onRemoteChange(sessionId: string, callback: (change: SessionChange) => void): () => void {
-      const session = sessions.get(sessionId);
-      if (!session) return () => {};
-
-      session.changeListeners.add(callback);
-      return () => session.changeListeners.delete(callback);
+      const listeners = sessionChangeListeners.get(sessionId) ?? new Set();
+      sessionChangeListeners.set(sessionId, listeners);
+      listeners.add(callback);
+      return () => {
+        listeners.delete(callback);
+        if (!listeners.size && !sessions.has(sessionId)) sessionChangeListeners.delete(sessionId);
+      };
     },
 
-    async pushChange(sessionId: string, change: SessionChange): Promise<void> {
-      if (isMessageSyncDisabled(sessionId) && change.type === 'message_added') return;
+    /**
+     * Failures are REPORTED, never thrown: every existing caller is
+     * fire-and-forget, and throwing would turn each one into an unhandled
+     * rejection. A caller that has to know (the headless node retains an
+     * unpublished transcript row and retries it on reconnect) reads the outcome.
+     */
+    async pushChange(sessionId: string, change: SessionChange): Promise<PushChangeOutcome> {
+      if (isMessageSyncDisabled(sessionId) && change.type === 'message_added') {
+        return { published: false, reason: 'message sync is disabled for this session', retryable: false };
+      }
       const session = sessions.get(sessionId);
-      const sessionConnected = session?.status.connected;
+      const sessionConnected = sessionTransportUsable(session);
 
       // For metadata-only updates (like hasPendingPrompt, isExecuting), we can push to the
       // index room even without a session room connection. The session room is only opened
@@ -4229,7 +4324,7 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
 
       if (!sessionConnected && !canPushIndexOnly) {
         console.warn('[CollabV3] Cannot push change - not connected:', sessionId, 'sessionExists:', !!session, 'indexConnected:', indexConnected, 'hasKey:', !!config.encryptionKey);
-        return;
+        return { published: false, reason: 'not connected', retryable: true };
       }
       // console.log('[CollabV3] pushChange:', sessionId, 'type:', change.type, 'sessionConnected:', sessionConnected, 'indexOnly:', !sessionConnected && canPushIndexOnly);
 
@@ -4239,10 +4334,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
         case 'message_added': {
           if (!session?.encryptionKey) {
             console.warn('[CollabV3] Cannot push message - no encryption key or session room not connected');
-            return;
+            return { published: false, reason: 'session room has no encryption key', retryable: true };
           }
           if (!shouldSyncMessageForSessionRoom(change.message.source, change.message.metadata, change.message.content, change.message.hidden)) {
-            return;
+            // Deliberately not sent. Not retryable: it would be filtered again.
+            return { published: false, reason: 'filtered from session-room sync', retryable: false };
           }
           try {
             const encrypted = await encryptMessage(change.message, session.encryptionKey);
@@ -4256,7 +4352,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
             clientMessage = { type: 'appendMessage', message: encrypted };
           } catch (err) {
             console.error('[CollabV3] Failed to encrypt message:', err);
-            return;
+            // Deterministic: the same row would fail the same way.
+            return { published: false, reason: 'encryption failed', retryable: false };
           }
           break;
         }
@@ -4332,6 +4429,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           break;
       }
 
+      // Tracks whether the session-room write actually happened, for the outcome
+      // returned at the end. Only `message_added` has nowhere else to land: a
+      // metadata update still reaches the index below.
+      let sessionRoomOutcome: PushChangeOutcome | undefined;
+
       // Send to session room (if connected, we have a message to send, and
       // this device is allowed to publish personal-sync ciphertext at all)
       if (clientMessage && sessionConnected && !withholdPersonalSyncWrite('session room write')) {
@@ -4351,7 +4453,19 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           session.lastActivity = Date.now();
         } catch (err) {
           console.error('[CollabV3] Failed to send message:', err);
+          sessionRoomOutcome = { published: false, reason: 'session room send failed', retryable: true };
         }
+      } else if (change.type === 'message_added') {
+        // The only branch where a message row silently goes nowhere: either the
+        // session room is not connected or the personal-sync write gate is
+        // holding writes back. Both clear on reconnect, so this is retryable.
+        sessionRoomOutcome = {
+          published: false,
+          reason: sessionConnected
+            ? 'personal-sync writes are withheld'
+            : 'session room is not connected',
+          retryable: true,
+        };
       }
 
       // Handle index updates based on change type
@@ -4425,7 +4539,11 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           } else if (meta.title && meta.provider) {
             // New session - need at least title and provider
             const now = updatedAt;
-            if (now === undefined || !isRetainedSession(now)) return;
+            if (now === undefined || !isRetainedSession(now)) {
+              // Too old to publish to the index. The session-room write above
+              // already happened (or reported why not), so the outcome stands.
+              return sessionRoomOutcome ?? { published: true };
+            }
             const newEntry: CachedSessionIndex = {
               sessionId: sessionId,
               projectId: meta.workspaceId ?? 'default',
@@ -4518,6 +4636,8 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
           }
         }
       }
+
+      return sessionRoomOutcome ?? { published: true };
     },
 
     syncSessionsToIndex(sessionsData: SessionIndexData[], options?: {
@@ -5372,6 +5492,25 @@ export function createCollabV3Sync(config: SyncConfig): SyncProvider {
      */
     isIndexReady(): boolean {
       return indexReady;
+    },
+
+    /**
+     * The index socket's identity, as a counter bumped on every disconnect (see
+     * `indexConnectionGeneration`). A caller holding a claim the server bound to
+     * one socket -- a create-session request -- compares this before answering:
+     * unlike `isIndexReady()`, a full down-and-up cycle cannot hide inside it.
+     */
+    getConnectionGeneration(): number {
+      return indexConnectionGeneration;
+    },
+
+    /**
+     * Called every time the index socket becomes usable, with the generation
+     * then in force. Returns an unsubscribe.
+     */
+    onConnectionGenerationChange(callback: (generation: number) => void): () => void {
+      connectionGenerationListeners.add(callback);
+      return () => connectionGenerationListeners.delete(callback);
     },
 
     /** Whether this device may publish personal-sync ciphertext. See GitHub #1117. */

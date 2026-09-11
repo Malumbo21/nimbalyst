@@ -183,6 +183,7 @@ public struct SessionListFacets: Sendable {
 
 /// Everything the sidebar filters on, applied in SQL before any row is materialized.
 public struct SessionListFilter: Hashable, Sendable {
+    public var hostDeviceId: String?
     public var projectId: String
     public var includeArchived: Bool
     public var searchText: String?
@@ -194,8 +195,10 @@ public struct SessionListFilter: Hashable, Sendable {
         includeArchived: Bool = false,
         searchText: String? = nil,
         phase: PhaseFilter = .all,
-        metaAgentEnabled: Bool = true
+        metaAgentEnabled: Bool = true,
+        hostDeviceId: String? = nil
     ) {
+        self.hostDeviceId = hostDeviceId
         self.projectId = projectId
         self.includeArchived = includeArchived
         self.searchText = searchText
@@ -231,6 +234,7 @@ public struct SessionListFilter: Hashable, Sendable {
     var arguments: [String: (any DatabaseValueConvertible)?] {
         [
             "projectId": projectId,
+            "hostDeviceId": hostDeviceId,
             "includeArchived": includeArchived ? 1 : 0,
             "search": likePattern,
             "phase": phase.sqlKey,
@@ -253,6 +257,7 @@ enum SessionListSQL {
     private static func visible(_ alias: String) -> String {
         """
         \(alias).projectId = :projectId
+        AND (:hostDeviceId IS NULL OR \(alias).hostDeviceId = :hostDeviceId)
         AND (:includeArchived = 1 OR \(alias).isArchived = 0)
         AND (:search IS NULL OR \(alias).titleDecrypted LIKE :search ESCAPE '\\')
         """

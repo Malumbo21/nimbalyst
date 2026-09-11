@@ -56,6 +56,8 @@ public final class SyncManager: ObservableObject {
     /// the response to a request it originated (this broadcast reaches every
     /// paired device), so only the requesting device navigates to the new session.
     public var onSessionCreated: ((String, String) -> Void)?
+    private var pendingCreationDrafts: [String: String] = [:]
+    private var pendingSessionDrafts: [String: String] = [:]
 
     /// Called with diagnostic info when session message sync completes (success or failure).
     /// Parameters: (sessionId, diagnostic).
@@ -265,6 +267,7 @@ public final class SyncManager: ObservableObject {
             logger.info("Ignoring index outcome from retired generation \(outcome.generation)")
             return
         }
+        applyPendingCreationDrafts()
         lastIndexIngestionMetrics = outcome.metrics
 
         // Successful decryption clears earlier suspicion. A failed delta
@@ -371,6 +374,8 @@ public final class SyncManager: ObservableObject {
 
     /// Disconnect from all rooms.
     public func disconnect() {
+        pendingCreationDrafts.removeAll()
+        pendingSessionDrafts.removeAll()
         leaveSessionRoom()
         indexClient.disconnect()
         // Drop the backlog this connection produced. A reconnect requests the
@@ -641,14 +646,28 @@ public final class SyncManager: ObservableObject {
             logger.error("Failed to decode create_session_response_broadcast")
             return
         }
+        let draft = pendingCreationDrafts.removeValue(forKey: broadcast.response.requestId)
         if broadcast.response.success {
             let sessionId = broadcast.response.sessionId ?? "unknown"
             logger.info("Session created: \(sessionId)")
             if let sessionId = broadcast.response.sessionId {
+                if let draft {
+                    pendingSessionDrafts[sessionId] = draft
+                    applyPendingCreationDrafts()
+                    if pendingSessionDrafts[sessionId] != nil { requestSessionIndexLookup(sessionId: sessionId) }
+                }
                 onSessionCreated?(broadcast.response.requestId, sessionId)
             }
         } else {
             logger.error("Session creation failed: \(broadcast.response.error ?? "unknown error")")
+        }
+    }
+
+    private func applyPendingCreationDrafts() {
+        for (sessionId, draft) in pendingSessionDrafts {
+            guard (try? database.session(byId: sessionId)) != nil else { continue }
+            updateDraftInput(sessionId: sessionId, draftInput: draft)
+            pendingSessionDrafts.removeValue(forKey: sessionId)
         }
     }
 
@@ -1631,7 +1650,9 @@ public final class SyncManager: ObservableObject {
         parentSessionId: String? = nil,
         provider: String? = nil,
         model: String? = nil,
-        agentRole: String? = nil
+        agentRole: String? = nil,
+        targetDeviceId: String? = nil,
+        initialDraft: String? = nil
     ) throws -> String {
         let encryptedProjectId = try crypto.encryptProjectId(projectId)
 
@@ -1644,6 +1665,7 @@ public final class SyncManager: ObservableObject {
         }
 
         let requestId = UUID().uuidString
+        if let initialDraft { pendingCreationDrafts[requestId] = initialDraft }
         let request = CreateSessionRequestMessage(
             request: EncryptedCreateSessionRequest(
                 requestId: requestId,
@@ -1656,7 +1678,8 @@ public final class SyncManager: ObservableObject {
                 provider: provider,
                 model: model,
                 agentRole: agentRole,
-                timestamp: Int(Date().timeIntervalSince1970 * 1000)
+                timestamp: Int(Date().timeIntervalSince1970 * 1000),
+                targetDeviceId: targetDeviceId
             )
         )
 

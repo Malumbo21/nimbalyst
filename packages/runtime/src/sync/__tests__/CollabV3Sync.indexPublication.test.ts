@@ -220,7 +220,7 @@ describe('CollabV3 index publication gate', () => {
     });
     await provider.pushChange('session-1', {
       type: 'metadata_updated',
-      metadata: { queuedPrompts: [{ id: 'p1', prompt: 'go', timestamp: 1_600 }] },
+      metadata: { queuedPrompts: [{ id: 'p1', prompt: 'go', timestamp: 1_600, attachments: [{id: 'image', filename: 'screen.png', mimeType: 'image/png', size: 5, encryptedData: 'ciphertext', iv: 'nonce'}], options: {mode: 'planning', model: 'claude-code:sonnet'} }] },
     });
 
     const packets = indexPackets(indexSocket);
@@ -229,6 +229,7 @@ describe('CollabV3 index publication gate', () => {
     // the burst suppression that dropped the timestamp-only push above.
     expect(packets[1]?.session.lastReadAt).toBe(1_500);
     expect(packets.at(-1)?.session.queuedPromptCount).toBe(1);
+    expect(packets.at(-1)?.session.encryptedQueuedPrompts[0]).toMatchObject({encryptedAttachments: [{encryptedData: 'ciphertext'}], options: {mode: 'planning', model: 'claude-code:sonnet'}});
     expect(provider.getCachedIndexEntry?.('session-1')?.queuedPrompts).toHaveLength(1);
     provider.disconnectAll();
   });

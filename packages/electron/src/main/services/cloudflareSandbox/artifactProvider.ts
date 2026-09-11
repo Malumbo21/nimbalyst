@@ -80,6 +80,7 @@ export interface ArtifactManifest {
 
 /** Digest references only. A mutable tag would let the image change under us. */
 const DIGEST_REF = /^[a-z0-9.\-_/]+@sha256:[a-f0-9]{64}$/;
+export const SANDBOX_SDK_VERSION = "0.13.0-next.751.1";
 
 export function parseManifest(raw: string): ArtifactManifest {
   let parsed: unknown;
@@ -97,7 +98,7 @@ export function parseManifest(raw: string): ArtifactManifest {
     !/^[a-f0-9]{64}$/.test(record.workerSha256) ||
     typeof record.helperSha256 !== "string" ||
     !/^[a-f0-9]{64}$/.test(record.helperSha256) ||
-    typeof record.sdkVersion !== "string"
+    record.sdkVersion !== SANDBOX_SDK_VERSION
   ) {
     throw new SandboxOperationError("deploy-failed", "manifest-fields");
   }

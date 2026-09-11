@@ -112,6 +112,7 @@ describe('buildSdkOptions MCP config (NIM-2372)', () => {
       HTTPS_PROXY: 'http://proxy.example:8080', HTTP_PROXY: 'http://proxy.example:8080', NO_PROXY: 'localhost',
       https_proxy: 'http://proxy.example:8080', http_proxy: 'http://proxy.example:8080', no_proxy: 'localhost',
       NODE_EXTRA_CA_CERTS: '/etc/corp.pem', SSL_CERT_FILE: '/etc/cert.pem', SSL_CERT_DIR: '/etc/certs',
+      CURL_CA_BUNDLE: '/tmp/runtime-ca.pem', REQUESTS_CA_BUNDLE: '/tmp/runtime-ca.pem', GIT_SSL_CAINFO: '/tmp/runtime-ca.pem',
       SHELL: '/bin/sh', LC_CTYPE: 'en_US.UTF-8', APPDATA: 'C:/AppData/Roaming', LOCALAPPDATA: 'C:/AppData/Local',
       SYSTEMDRIVE: 'C:', HOMEDRIVE: 'C:', HOMEPATH: '/Users/test', PROGRAMFILES: 'C:/Program Files',
       'PROGRAMFILES(X86)': 'C:/Program Files (x86)', NUMBER_OF_PROCESSORS: '8', OS: 'Windows_NT',

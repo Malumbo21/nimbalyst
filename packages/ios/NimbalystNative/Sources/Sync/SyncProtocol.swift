@@ -425,6 +425,7 @@ struct EncryptedCreateSessionRequest: Codable {
     let model: String?
     let agentRole: String?
     let timestamp: Int
+    var targetDeviceId: String? = nil
 }
 
 // MARK: - Worktree Creation Request

@@ -24,6 +24,7 @@ import type {
   SandboxDeployment,
   SandboxDeploymentStatus,
   SandboxDeploymentTarget,
+  SandboxNodeState,
 } from "../../../shared/cloudflareSandbox";
 import { SandboxOperationError } from "./errors";
 
@@ -38,6 +39,34 @@ interface PersistedDeployment {
   deployedAt: string | null;
   errorMessage: string | null;
   container: SandboxContainerState;
+  /**
+   * Absent on every record written before nodes existed, and absent again once
+   * the node's credential is confirmed revoked. Read through `toContract`,
+   * never directly, so an older record does not surface as `undefined`.
+   *
+   * Identity only. No observation is stored here: see `PersistedNodeRecord`.
+   */
+  node?: PersistedNodeRecord;
+}
+
+/**
+ * What the desktop is allowed to keep about a node.
+ *
+ * `nodeId` is the whole reason this record exists — it is the only handle for
+ * revoking a credential that lives on the server and outlives the container.
+ * Everything else is here because the UI has to say which workspace and branch
+ * the node was connected for.
+ *
+ * Explicitly NOT here: the access or refresh token, the encryption seed, the
+ * Claude credential, the repo URL, and any live observation of the process
+ * (`running`, `exitCode`, `recentLog`). Observations belong in the IPC
+ * response, not on disk.
+ */
+interface PersistedNodeRecord {
+  nodeId: string | null;
+  deviceId: string | null;
+  provisionedAt: string | null;
+  workspace: { projectId: string; branch: string } | null;
 }
 
 interface StoreSchema {
@@ -48,6 +77,12 @@ interface StoreSchema {
    * deploy the same Worker and end up sharing one `personal` Durable Object.
    */
   installationId?: string;
+  /**
+   * Node ids whose credential this desktop issued and could not revoke. Outside
+   * `deployment` so a delete or redeploy cannot lose them. See
+   * `readPendingRevocations`.
+   */
+  pendingRevocations?: string[];
 }
 
 let store: Store<StoreSchema> | null = null;
@@ -82,6 +117,44 @@ const NEVER_OBSERVED: SandboxContainerState = {
   observedAt: null,
   message: null,
 };
+
+/**
+ * Every field a node record can carry, so a record persisted by an older build
+ * gains new fields as nulls rather than as `undefined`. See STATE_PERSISTENCE.md.
+ */
+function createDefaultNodeRecord(): PersistedNodeRecord {
+  return { nodeId: null, deviceId: null, provisionedAt: null, workspace: null };
+}
+
+/**
+ * Expand the stored identity into the contract shape.
+ *
+ * The observation half is always the "not running" default. Callers that have
+ * actually looked at the container overlay their reading onto the response;
+ * nothing writes it back. A record loaded from disk therefore never claims a
+ * process is running, which is the honest answer, because the container may
+ * have slept any time since it was written.
+ */
+function toNodeContract(saved: PersistedNodeRecord | undefined): SandboxNodeState | null {
+  if (!saved) return null;
+  const defaults = createDefaultNodeRecord();
+  return {
+    running: false,
+    processId: null,
+    startedAt: null,
+    exitCode: null,
+    recentLog: "",
+    nodeId: saved.nodeId ?? defaults.nodeId,
+    deviceId: saved.deviceId ?? defaults.deviceId,
+    provisionedAt: saved.provisionedAt ?? defaults.provisionedAt,
+    workspace: saved.workspace
+      ? {
+          projectId: saved.workspace.projectId ?? "",
+          branch: saved.workspace.branch ?? "",
+        }
+      : defaults.workspace,
+  };
+}
 
 export function readDeployment(): SandboxDeployment | null {
   const saved = getStore().get("deployment");
@@ -124,9 +197,128 @@ export function writeDeployment(
     deployedAt: input.deployedAt,
     errorMessage: input.errorMessage ?? null,
     container: existing?.container ?? NEVER_OBSERVED,
+    // Carried over deliberately. A deploy replaces the Worker and its
+    // container, but it does NOT invalidate anything on the sync server: the
+    // node's credential is still live and `nodeId` is the only handle for
+    // revoking it. Dropping the record here (as an earlier version did, at the
+    // *start* of a deploy that might then fail) orphaned that credential with
+    // nothing left pointing at it. The process observation is not stored at
+    // all, so nothing carried forward can claim a node is running.
+    node: existing?.node,
   };
   getStore().set("deployment", record);
   return toContract(record);
+}
+
+/**
+ * Record what was provisioned. Takes identity only, by type: there is no way to
+ * hand this an observation, so no caller can accidentally persist one.
+ */
+export function updateDeploymentNode(patch: Partial<PersistedNodeRecord>): SandboxDeployment {
+  const existing = getStore().get("deployment");
+  if (!existing) {
+    throw new SandboxOperationError("deployment-stale", "node-update-without-record");
+  }
+  const record: PersistedDeployment = {
+    ...existing,
+    node: { ...createDefaultNodeRecord(), ...(existing.node ?? {}), ...patch },
+    revision: randomUUID(),
+  };
+  getStore().set("deployment", record);
+  return toContract(record);
+}
+
+/** Forget the node entirely. Used once its credential has been revoked. */
+export function clearDeploymentNode(): SandboxDeployment {
+  const existing = getStore().get("deployment");
+  if (!existing) {
+    throw new SandboxOperationError("deployment-stale", "node-clear-without-record");
+  }
+  const { node: _dropped, ...rest } = existing;
+  const record: PersistedDeployment = { ...rest, revision: randomUUID() };
+  getStore().set("deployment", record);
+  return toContract(record);
+}
+
+/** The saved node id, needed to revoke its credential. */
+export function readNodeId(): string | null {
+  return getStore().get("deployment")?.node?.nodeId ?? null;
+}
+
+/**
+ * Node ids whose revocation was attempted and failed.
+ *
+ * Kept outside the deployment record on purpose: the whole point is that they
+ * survive the deployment being replaced or deleted, which is exactly when a
+ * half-cleaned-up credential is easiest to lose track of. Ids only, never a
+ * token, and never more than a handful.
+ */
+/**
+ * How much outstanding cleanup is tolerated before this desktop stops issuing
+ * new credentials.
+ *
+ * This is a gate on ISSUANCE, not a cap that evicts. An earlier version kept
+ * the newest 20 and dropped the oldest, which quietly destroyed the only record
+ * of a credential that was still live on the server: exactly the thing the
+ * queue exists to prevent. Nothing is ever evicted to make room.
+ */
+export const PENDING_REVOCATION_CAPACITY = 20;
+
+/**
+ * Structural ceiling, well above the issuance gate. Reaching it means something
+ * is badly wrong, and at that point refusing the write is better than growing a
+ * settings file without bound.
+ */
+const PENDING_REVOCATION_HARD_LIMIT = 64;
+
+/**
+ * `node_id` comes off the wire. It is persisted, so it gets the same treatment
+ * as any other stored identifier: a shape, and a length. The server mints
+ * base64url ids; anything else is not one of ours and does not go on disk.
+ */
+const NODE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function isValidNodeId(nodeId: unknown): nodeId is string {
+  return typeof nodeId === "string" && NODE_ID_PATTERN.test(nodeId);
+}
+
+export function readPendingRevocations(): string[] {
+  const saved = getStore().get("pendingRevocations");
+  return Array.isArray(saved) ? saved.filter(isValidNodeId) : [];
+}
+
+/** True when the cleanup backlog is deep enough to stop issuing. */
+export function pendingRevocationsAtCapacity(): boolean {
+  return readPendingRevocations().length >= PENDING_REVOCATION_CAPACITY;
+}
+
+/** Returns false when the id could not be stored. Never evicts to make room. */
+export function recordPendingRevocation(nodeId: string): boolean {
+  if (!isValidNodeId(nodeId)) return false;
+  const existing = readPendingRevocations();
+  if (existing.includes(nodeId)) return true;
+  if (existing.length >= PENDING_REVOCATION_HARD_LIMIT) return false;
+  getStore().set("pendingRevocations", [...existing, nodeId]);
+  return true;
+}
+
+export function clearPendingRevocation(nodeId: string): void {
+  const remaining = readPendingRevocations().filter((id) => id !== nodeId);
+  getStore().set("pendingRevocations", remaining);
+}
+
+/**
+ * Drop the saved node record once its credential is confirmed revoked.
+ *
+ * Matched on id so a record replaced underneath this call is left alone. See
+ * `confirmRevoked` in nodeProvisioner: leaving a revoked id in the record makes
+ * every later attempt re-revoke a dead credential.
+ */
+export function clearRevokedNode(nodeId: string): void {
+  const existing = getStore().get("deployment");
+  if (!existing?.node || existing.node.nodeId !== nodeId) return;
+  const { node: _revoked, ...rest } = existing;
+  getStore().set("deployment", { ...rest, revision: randomUUID() });
 }
 
 /** Patch the saved record, bumping the revision. Throws if none exists. */
@@ -219,6 +411,7 @@ function toContract(record: PersistedDeployment): SandboxDeployment {
     revision: record.revision,
     status: record.status,
     container: record.container,
+    node: toNodeContract(record.node),
     profileName: record.profileName,
     account: { id: record.accountId, name: record.accountName },
     // The control path is a private Worker RPC binding, so there is no public

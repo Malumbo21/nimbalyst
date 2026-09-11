@@ -17,6 +17,7 @@ function deployment(overrides: Partial<SandboxDeployment> = {}): SandboxDeployme
     revision: 'rev-7',
     status: 'deployed',
     container: { status: 'stopped', observedAt: null, message: null },
+    node: null,
     profileName: 'work',
     account: { id: 'account-b', name: 'Account B' },
     access: 'private-rpc',

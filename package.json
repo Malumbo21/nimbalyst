@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "npm run build --prefix packages/runtime",
-    "build:workspace-deps": "npm run build --workspace=@nimbalyst/tracker-core --workspace=@nimbalyst/extension-sdk",
+    "build:workspace-deps": "npm run build --workspace=@nimbalyst/tracker-core --workspace=@nimbalyst/extension-sdk --workspace=@nimbalyst/collab-protocol",
     "typecheck": "node scripts/run-workspace-script.mjs typecheck",
     "typecheck:prepush": "npm run build:workspace-deps && npm run build --workspace=@nimbalyst/runtime -- --logLevel warn && npm run build --prefix packages/extensions/nimbalyst-memory/engine && npm run typecheck",
     "test": "npm run test:unit",

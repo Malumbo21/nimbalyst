@@ -188,7 +188,7 @@ export function checkRuntimeHostBoundary() {
 }
 
 /**
- * The three modules a headless host has to be able to import.
+ * The session-execution and personal-sync modules a headless host imports.
  *
  * A source scan cannot protect this. The regression that motivated it was a
  * single *type-only* import of the `@nimbalyst/extension-sdk` barrel in
@@ -198,13 +198,18 @@ export function checkRuntimeHostBoundary() {
  * looks wrong, and runtime imports that barrel in 25 other places where it is
  * entirely fine. Only the resulting closure distinguishes them.
  */
-export const HEADLESS_ENTRY_POINTS = [
-  'packages/runtime/src/ai/server/SessionManager.ts',
-  'packages/runtime/src/ai/adapters/sessionStore.ts',
-  'packages/runtime/src/ai/server/providers/ClaudeCodeProvider.ts',
-];
+// Derive the roots from the build config so newly emitted entry points cannot
+// silently escape the boundary gate. Keep measuring their SOURCE closure below.
+const nodeConfigPath = path.join(repoRoot, 'packages/runtime/tsconfig.node.json');
+const nodeConfig = ts.readConfigFile(nodeConfigPath, ts.sys.readFile);
+if (nodeConfig.error) throw new Error(ts.flattenDiagnosticMessageText(nodeConfig.error.messageText, '\n'));
+const nodeProgramConfig = ts.parseJsonConfigFileContent(nodeConfig.config, ts.sys, path.dirname(nodeConfigPath));
+if (nodeProgramConfig.errors.length) {
+  throw new Error(nodeProgramConfig.errors.map(error => ts.flattenDiagnosticMessageText(error.messageText, '\n')).join('\n'));
+}
+export const HEADLESS_ENTRY_POINTS = nodeProgramConfig.fileNames.map(file => path.relative(repoRoot, file));
 
-// Headroom over the measured 101 so ordinary growth does not trip the gate. A
+// Headroom over the measured 143 so ordinary growth does not trip the gate. A
 // re-introduced barrel cycle lands at 600+, so this catches the failure mode
 // without policing every added module.
 export const HEADLESS_CLOSURE_FILE_BUDGET = 200;

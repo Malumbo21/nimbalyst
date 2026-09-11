@@ -12,11 +12,15 @@ import { safeHandle } from "../utils/ipcRegistry";
 import { killInFlightHelpers } from "../services/cloudflareSandbox/sandboxControl";
 import {
   CLOUDFLARE_SANDBOX_CHANNELS,
+  type ConnectNodeRequest,
   type CreateProfileRequest,
   type DeleteDeploymentRequest,
   type DeployRequest,
+  type DisconnectNodeRequest,
   type ListAccountsRequest,
+  type NodeStatusRequest,
   type PlanDeploymentRequest,
+  type StartRemoteSessionRequest,
   type StopRequest,
   type WakeRequest,
 } from "../../shared/cloudflareSandbox";
@@ -71,5 +75,30 @@ export function registerCloudflareSandboxHandlers(): void {
     CLOUDFLARE_SANDBOX_CHANNELS.deleteDeployment,
     (_event, request: DeleteDeploymentRequest) =>
       service().deleteDeployment(request)
+  );
+
+  // The node channels take `workspacePath` explicitly rather than resolving a
+  // "current workspace" from the sender: two windows on two workspaces share
+  // one sandbox, and inferring which one they meant would silently connect the
+  // node to the wrong repository. See ERROR_HANDLING.md.
+  safeHandle(
+    CLOUDFLARE_SANDBOX_CHANNELS.connectNode,
+    (_event, request: ConnectNodeRequest) => service().connectNode(request)
+  );
+
+  safeHandle(
+    CLOUDFLARE_SANDBOX_CHANNELS.nodeStatus,
+    (_event, request: NodeStatusRequest) => service().nodeStatus(request)
+  );
+
+  safeHandle(
+    CLOUDFLARE_SANDBOX_CHANNELS.disconnectNode,
+    (_event, request: DisconnectNodeRequest) => service().disconnectNode(request)
+  );
+
+  safeHandle(
+    CLOUDFLARE_SANDBOX_CHANNELS.startRemoteSession,
+    (_event, request: StartRemoteSessionRequest) =>
+      service().startRemoteSession(request)
   );
 }

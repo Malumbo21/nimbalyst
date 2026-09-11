@@ -51,7 +51,27 @@ export interface SandboxControlTarget {
   wranglerModulePath: string;
 }
 
+export interface SandboxProvisionRequest {
+  files: Array<{ path: string; content: string; mode?: number }>;
+  allowedHosts: string[];
+}
+
+export interface SandboxNodeStatus extends SandboxManagerStatus {
+  sandboxId: "personal";
+  node: {
+    running: boolean;
+    processId: string | null;
+    startedAt: number | null;
+    exitCode: number | null;
+    recentLog: string;
+  };
+}
+
 export interface SandboxControlClient {
+  provision(target: SandboxControlTarget, request: SandboxProvisionRequest): Promise<SandboxNodeStatus>;
+  startNode(target: SandboxControlTarget, request: { configPath: string }): Promise<SandboxNodeStatus>;
+  nodeStatus(target: SandboxControlTarget): Promise<SandboxNodeStatus>;
+  stopNode(target: SandboxControlTarget, request: { discardEphemeralData: true }): Promise<SandboxNodeStatus>;
   status(target: SandboxControlTarget): Promise<SandboxManagerStatus>;
   wake(target: SandboxControlTarget): Promise<SandboxManagerStatus>;
   stop(
@@ -84,6 +104,35 @@ export class ChildProcessControlClient implements SandboxControlClient {
 
   wake(target: SandboxControlTarget): Promise<SandboxManagerStatus> {
     return this.#invoke(target, { operation: "wake" });
+  }
+
+  provision(target: SandboxControlTarget, request: SandboxProvisionRequest): Promise<SandboxNodeStatus> {
+    return this.#invokeNode(target, "provision", request);
+  }
+
+  startNode(target: SandboxControlTarget, request: { configPath: string }): Promise<SandboxNodeStatus> {
+    return this.#invokeNode(target, "startNode", request);
+  }
+
+  nodeStatus(target: SandboxControlTarget): Promise<SandboxNodeStatus> {
+    return this.#invokeNode(target, "nodeStatus");
+  }
+
+  stopNode(target: SandboxControlTarget, request: { discardEphemeralData: true }): Promise<SandboxNodeStatus> {
+    if (request?.discardEphemeralData !== true) {
+      throw new SandboxOperationError("confirmation-required", "stop-without-consent");
+    }
+    return this.#invokeNode(target, "stopNode", request);
+  }
+
+  async #invokeNode(target: SandboxControlTarget, operation: string, request?: unknown): Promise<SandboxNodeStatus> {
+    const raw = await this.#run(target, {
+      wranglerModulePath: target.wranglerModulePath,
+      configPath: target.configPath,
+      operation,
+      ...(request === undefined ? {} : { request }),
+    }, this.#timeoutMs);
+    return parseNodeStatusResponse(raw);
   }
 
   stop(
@@ -132,6 +181,9 @@ const HELPER_CODES = new Set<CloudflareSandboxErrorCode>([
   "wrangler-missing",
   "wrangler-unsupported",
   "container-unavailable",
+  "node-not-provisioned",
+  "node-start-failed",
+  "grant-failed",
   "unknown",
 ]);
 
@@ -149,7 +201,36 @@ const HELPER_REASON_MESSAGES: Record<string, string> = {
     "Nimbalyst asked the sandbox for something it does not support.",
   "invalid-request": "Nimbalyst sent the sandbox a request it could not read.",
   "rpc-failed": "The sandbox did not respond to the request.",
+  "invalid-path": "Sandbox files must be located under /home/nimbalyst/ without traversal or symbolic links.",
+  "node-not-provisioned": "Provision the sandbox node configuration before starting it.",
+  "node-start-failed": "The sandbox node could not start. Check its status and recent logs.",
+  "grant-failed": "The sandbox device authorization could not be completed.",
 };
+
+export function parseNodeStatusResponse(raw: unknown): SandboxNodeStatus {
+  const status = assertExpectedSandbox(parseHelperResponse(raw));
+  const data = (raw as { data: Record<string, unknown> }).data;
+  const node = data.node as Record<string, unknown> | null;
+  if (!node || typeof node !== "object" || Array.isArray(node)
+    || data.persistence !== "ephemeral"
+    || typeof data.lastChangedAt !== "number" || !Number.isFinite(data.lastChangedAt)
+    || typeof data.sleepAfterSeconds !== "number" || !Number.isFinite(data.sleepAfterSeconds) || data.sleepAfterSeconds < 0
+    || typeof node.running !== "boolean"
+    || !(node.processId === null || (typeof node.processId === "string" && node.processId.length > 0))
+    || !(node.startedAt === null || (typeof node.startedAt === "number" && Number.isFinite(node.startedAt)))
+    || !(node.exitCode === null || (typeof node.exitCode === "number" && Number.isInteger(node.exitCode)))
+    || typeof node.recentLog !== "string" || Buffer.byteLength(node.recentLog, "utf8") > 4096
+    || (node.running && (!node.processId || node.startedAt === null || node.exitCode !== null || !["running", "healthy"].includes(status.state)))) {
+    throw new SandboxOperationError("container-unavailable", "helper-node-response-shape");
+  }
+  return { ...status, sandboxId: "personal", node: {
+    running: node.running,
+    processId: node.processId as string | null,
+    startedAt: node.startedAt as number | null,
+    exitCode: node.exitCode as number | null,
+    recentLog: node.recentLog,
+  } };
+}
 
 /**
  * Parse the helper's single JSON line.

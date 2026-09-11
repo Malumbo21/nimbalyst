@@ -1038,15 +1038,18 @@ public struct SessionDetailView: View {
         do {
             try syncManager.createSession(
                 projectId: session.projectId,
-                initialPrompt: action.body,
+                initialPrompt: action.autoSubmit == false ? nil : action.body,
                 parentSessionId: session.parentSessionId,
                 provider: ModelPreferences.providerFromModelId(action.model),
-                model: action.model
+                model: action.model,
+                targetDeviceId: session.hostDeviceId,
+                initialDraft: action.autoSubmit == false ? action.body : nil
             )
             AnalyticsManager.shared.capture("mobile_action_prompt_launched_new_session", properties: [
                 "model": action.model ?? "inherit"
             ])
         } catch {
+            sendError = error.localizedDescription
             logger.error("Failed to launch session from action prompt: \(error.localizedDescription)")
         }
     }

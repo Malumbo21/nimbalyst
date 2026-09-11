@@ -6,11 +6,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-export async function buildArtifact(outDir = resolve(packageRoot, 'dist')) {
-  const release = JSON.parse(await readFile(resolve(packageRoot, 'release.json'), 'utf8'));
-  const pkg = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
-  const installed = JSON.parse(await readFile(resolve(packageRoot, 'node_modules/@cloudflare/sandbox/package.json'), 'utf8'));
-  if (release.schemaVersion !== 1 || release.sdkVersion !== pkg.dependencies['@cloudflare/sandbox'] || installed.version !== release.sdkVersion) {
+export function validateRelease(release, pkg, imageConfig, installed) {
+  if (release.schemaVersion !== 1 || release.sdkVersion !== pkg.dependencies['@cloudflare/sandbox'] || installed.version !== release.sdkVersion
+    || imageConfig.sandbox.sdkVersion !== release.sdkVersion
+    || imageConfig.sandbox.imageRef !== `docker.io/cloudflare/sandbox:${release.sdkVersion}`) {
     throw new Error('The Worker SDK and image release must use the same pinned version.');
   }
   // An unpublished build is useful for local validation, but cannot be deployed.
@@ -18,6 +17,19 @@ export async function buildArtifact(outDir = resolve(packageRoot, 'dist')) {
   if (release.image !== null && !/^docker\.io\/[a-z0-9/_-]+@sha256:[a-f0-9]{64}$/.test(release.image)) {
     throw new Error('The release image must be a Docker Hub repository pinned by sha256 digest.');
   }
+  if (release.image !== null && (release.publishedImage?.image !== release.image
+    || release.publishedImage.sdkVersion !== release.sdkVersion
+    || release.publishedImage.baseImageDigest !== imageConfig.sandbox.imageDigest)) {
+    throw new Error('Published image provenance must match the image digest, Worker SDK and pinned base image.');
+  }
+}
+
+export async function buildArtifact(outDir = resolve(packageRoot, 'dist')) {
+  const release = JSON.parse(await readFile(resolve(packageRoot, 'release.json'), 'utf8'));
+  const pkg = JSON.parse(await readFile(resolve(packageRoot, 'package.json'), 'utf8'));
+  const imageConfig = JSON.parse(await readFile(resolve(packageRoot, 'container/image.config.json'), 'utf8'));
+  const installed = JSON.parse(await readFile(resolve(packageRoot, 'node_modules/@cloudflare/sandbox/package.json'), 'utf8'));
+  validateRelease(release, pkg, imageConfig, installed);
   const result = await build({
     absWorkingDir: packageRoot,
     entryPoints: ['src/index.ts'],

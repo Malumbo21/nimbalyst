@@ -12,9 +12,9 @@ A `linux/amd64` image that adds the headless Nimbalyst runner (`@nimbalyst/node`
 | `/usr/local/bin/nimbalyst-node` | Launcher. Uses our Node with a clean environment; also drops privileges if an administrator invokes it as root — uid, gid, `no_new_privs`, and the capability bounding set, so nothing reached later can hand root back. |
 | `/var/lib/nimbalyst`, `/workspace` | Writable, owned by `nimbalyst`. |
 
-The base image's `ENTRYPOINT` (`/container-server/sandbox`) and its own `node` remain in place. `USER 10001:10001` applies to the control service and all of its children. The control API is reachable inside the container, so dropping privileges only in the runner would leave a root execution path. The application code stays root-owned; `/home/nimbalyst`, `/workspace`, `/var/lib/nimbalyst`, and temporary storage are writable.
+The preview base image's `ENTRYPOINT` (`/usr/bin/tini -- /container-server/sandbox`) and its own `node` remain in place. `USER 10001:10001` applies to tini, the control service and all of its children. The control API is reachable inside the container, so dropping privileges only in the runner would leave a root execution path. The application code stays root-owned; `/home/nimbalyst`, `/workspace`, `/var/lib/nimbalyst`, and temporary storage are writable.
 
-The whole container is one execution trust domain. Keep privileged credentials and unrelated tenants outside it. The current Worker has no public control route, disables internet access, and supports only lifecycle and smoke operations. Root-only mounts and dynamic system-certificate installation for HTTPS interception are unsupported by this image and require separate design and validation before enabling those features.
+The whole container is one execution trust domain. Keep privileged credentials and unrelated tenants outside it. The current Worker has no public control route and disables general internet access, with an explicit host allowlist. Its private RPCs provision files and manage the headless node process. Root-only mounts are unsupported. HTTPS interception is explicitly enabled for the preview SDK. The system CA bundle remains root-owned but grants the runtime group write access so Cloudflare can append its injected certificate during startup; the surrounding directory stays root-owned and unwritable. The launcher adds Cloudflare's fixed runtime CA to Node's trust and creates a temporary combined CA bundle for Git, curl, and Claude's child process. It does not inherit caller-supplied certificate paths or TLS verification overrides.
 
 **No credentials are baked in.** The launcher clears inherited environment variables. API keys and MCP connections must be provisioned explicitly in the runner config; implicit repository/user MCP configuration and executable settings are disabled. CLI OAuth login can use the container user's credential store if one is explicitly provisioned.
 
@@ -27,7 +27,7 @@ node packages/cloudflare-sandbox/container/stage-build-context.mjs
 
 docker buildx build --platform linux/amd64 \
   -f packages/cloudflare-sandbox/container/Dockerfile \
-  -t nimbalyst/sandbox-node:0.12.9 \
+  -t nimbalyst/sandbox-node:0.13.0-next.751.1 \
   packages/cloudflare-sandbox/container/.build-context
 ```
 
@@ -47,9 +47,9 @@ The build ends with `RUN nimbalyst-node --smoke`, which fails the build unless t
 
 ## Versions
 
-All pins live in `image.config.json`; `__tests__/imageContract.test.ts` fails if the Dockerfile drifts from it.
+All pins live in `image.config.json`; `checks/image-pins.test.mjs` fails if the Dockerfile or Worker SDK version drifts from it.
 
-`sandbox.sdkVersion` **must equal the `@cloudflare/sandbox` version the Worker package depends on.** The SDK and the container server inside the base image speak a versioned protocol, and a mismatch appears at run time as an opaque exec failure rather than a build error. Current pin: **0.12.9** (the current stable release; base manifest digest recorded in `image.config.json`).
+`sandbox.sdkVersion` **must equal the `@cloudflare/sandbox` version the Worker package depends on.** The SDK and the container server inside the base image speak a versioned protocol. Current pin: **0.13.0-next.751.1**, with the linux/amd64 base manifest digest recorded in `image.config.json`. Stable and preview control protocols are incompatible; deployment uses immediate container rollout.
 
 To move the pin: change `image.config.json` and the matching `ARG` defaults in the `Dockerfile`, bump the Worker's `@cloudflare/sandbox` dependency in the same change, and re-run the build.
 
@@ -59,7 +59,7 @@ End users should not need Docker. A Worker can reference an already-published im
 
 Reference it **by immutable digest**, not by tag. The installed Wrangler parses `NAME:TAG@DIGEST` and `NAME@DIGEST`, builds `repository@digest` references, and passes a non-Cloudflare hostname through unchanged — so a `registry/repo@sha256:…` reference is expressible. A tag is mutable and would let the image under a deployed Worker change without the config changing.
 
-Cloudflare's public documentation shows tag references only, and nothing here has been deployed or accepted by the remote API, so treat "Wrangler accepts the digest form" as the verified part and "Cloudflare deploys it" as still open, pending a `wrangler deploy --dry-run` on the Worker side.
+Wrangler 4.125.0 accepts the preview digest configuration with `--containers-rollout immediate` in a local dry run. Remote image acceptance and live operation still require a Cloudflare deployment.
 
 ## Running the runner
 
@@ -81,6 +81,8 @@ Write the config into the sandbox at run time, e.g.:
 `databasePath` and `--workspace` must both point somewhere the `nimbalyst` user can write; `/var/lib/nimbalyst` and `/workspace` already are.
 
 ## Security validation
+
+The preview runtime smoke uses WebSocket RPC at `/rpc`, activates a control session, starts the runner with an argv command and waits for its exit. It checks both tini and the control server run as uid 10001, then checks launcher hardening and the absence of setuid/setgid files. The probe bundles successfully in local tests; the preview Docker build and runtime smoke must still be run. The measurements below describe the earlier stable image and do not validate the preview image.
 
 Built locally on 2026-09-09, most recently as `nimbalyst/sandbox-node:0.12.9-hardened2`, image `sha256:239f084128c57f9349ebd2d61d13ffa85afd02aa167713198d213cd44e8b5b24` (`linux/amd64`, emulated on an arm64 daemon, Docker 29.4.1). No image was published or deployed to Cloudflare.
 

@@ -952,7 +952,7 @@ export function SettingsView({
         return <AgentFeaturesPanel />;
       case 'cloudflare-sandboxes':
         // Self-contained; talks to the `cloudflare-sandbox:*` handlers directly.
-        return <CloudflareSandboxesPanel />;
+        return <CloudflareSandboxesPanel workspacePath={workspacePath ?? undefined} />;
       case 'beta-features':
         return <BetaFeaturesPanel />;
       case 'notifications':

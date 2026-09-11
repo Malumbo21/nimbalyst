@@ -286,6 +286,47 @@
         "import": "./dist-node/ai/server/transcript/TranscriptMigrationService.js"
       }
     },
+    "./sync/CollabV3Sync": {
+      "node": {
+        "types": "./dist-node/sync/CollabV3Sync.d.ts",
+        "import": "./dist-node/sync/CollabV3Sync.js"
+      },
+      "import": "./dist/sync/CollabV3Sync.js",
+      "types": "./dist/sync/CollabV3Sync.d.ts"
+    },
+    "./sync/SyncedSessionStore": {
+      "node": {
+        "types": "./dist-node/sync/SyncedSessionStore.d.ts",
+        "import": "./dist-node/sync/SyncedSessionStore.js"
+      },
+      "import": "./dist/sync/SyncedSessionStore.js",
+      "types": "./dist/sync/SyncedSessionStore.d.ts"
+    },
+    "./sync/types": {
+      "node": {
+        "types": "./dist-node/sync/types.d.ts",
+        "import": "./dist-node/sync/types.js"
+      },
+      "import": "./dist/sync/types.js",
+      "types": "./dist/sync/types.d.ts"
+    },
+    "./sync/syncClientInfo": {
+      "node": {
+        "types": "./dist-node/sync/syncClientInfo.d.ts",
+        "import": "./dist-node/sync/syncClientInfo.js"
+      },
+      "import": "./dist/sync/syncClientInfo.js",
+      "types": "./dist/sync/syncClientInfo.d.ts"
+    },
+    "./sync/nodeCredentialToken": {
+      "node": {
+        "types": "./dist-node/sync/nodeCredentialToken.d.ts",
+        "import": "./dist-node/sync/nodeCredentialToken.js"
+      },
+      "types": "./src/sync/nodeCredentialToken.ts",
+      "import": "./src/sync/nodeCredentialToken.ts",
+      "default": "./src/sync/nodeCredentialToken.ts"
+    },
     "./sync/encryptionKey": {
       "node": {
         "types": "./dist-node/sync/encryptionKey.d.ts",
@@ -300,7 +341,7 @@
   "scripts": {
     "dev": "vite build --watch --mode development",
     "build": "npm run build:node && vite build",
-    "build:node": "tsc -p tsconfig.node.json && node scripts/add-node-extensions.mjs",
+    "build:node": "npm run build --workspace=@nimbalyst/collab-protocol && tsc -p tsconfig.node.json && node scripts/add-node-extensions.mjs",
     "clean": "rm -rf dist dist-node",
     "typecheck": "tsc --noEmit"
   },

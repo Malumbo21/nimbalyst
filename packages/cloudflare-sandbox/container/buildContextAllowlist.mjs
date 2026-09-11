@@ -25,8 +25,8 @@ export const ALLOWLISTED_DIRS = [
   'packages/runtime/scripts',
   'packages/extension-sdk/src',
   'packages/tracker-core/src',
-  // Source-only workspaces (`main` points straight at `src/index.ts`), pulled in
-  // as type dependencies of the runtime's node closure.
+  // Collaboration protocol build inputs and adapter type dependencies used by
+  // the runtime's node closure.
   'packages/collab-protocol/src',
   'packages/collab-adapters/src',
   // The SQL migrations. Not restated anywhere: `packages/node/src/db/migrations.ts`
@@ -77,6 +77,7 @@ export const ALLOWLISTED_FILES = [
   'packages/extension-sdk/tsconfig.json',
   'packages/tracker-core/tsconfig.json',
   'packages/collab-protocol/tsconfig.json',
+  'packages/collab-protocol/tsconfig.build.json',
   'packages/collab-adapters/tsconfig.json',
 ];
 

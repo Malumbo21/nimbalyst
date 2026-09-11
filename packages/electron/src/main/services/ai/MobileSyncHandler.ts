@@ -113,6 +113,10 @@ export class MobileSyncHandler {
       // Listen for index changes and insert queued prompts into the queued_prompts table
       if (syncProvider.onIndexChange) {
         syncProvider.onIndexChange(async (sessionId, entry) => {
+            // Foreign hosts own both queue persistence and execution. Never
+            // echo their queue from this desktop, even before a local row exists.
+            const host = entry.hostDeviceId ?? syncProvider.getCachedIndexEntry?.(sessionId)?.hostDeviceId;
+            if (host && host !== getLocalHostDeviceId()) return;
             // Notify renderer about session list changes
             // This ensures new sessions from mobile appear immediately in the UI
             // Use getCachedIndexEntry to get projectId without database lookup

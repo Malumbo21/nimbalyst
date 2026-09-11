@@ -118,6 +118,28 @@ export interface SyncStatus {
   error: string | null;
 }
 
+/**
+ * What became of a `pushChange`.
+ *
+ * Providers report failures by RETURNING this rather than throwing, so the
+ * fire-and-forget callers that have always ignored the result keep behaving
+ * exactly as they did -- no new rejection paths, no timing change. A caller that
+ * needs to know (the headless node, which must retain an unpublished transcript
+ * row and retry it) reads the outcome.
+ */
+export interface PushChangeOutcome {
+  /** True when the change was handed to the transport. */
+  published: boolean;
+  /** Why not. Present only when `published` is false. */
+  reason?: string;
+  /**
+   * False when the change was deliberately not sent -- filtered content, sync
+   * disabled for the session -- and re-sending it later would be wrong. Absent
+   * or true means the attempt failed and may be worth another.
+   */
+  retryable?: boolean;
+}
+
 export interface SyncProvider {
   /** Connect to sync server for a session */
   connect(sessionId: string): Promise<void>;
@@ -155,8 +177,20 @@ export interface SyncProvider {
     callback: (change: SessionChange) => void
   ): () => void;
 
-  /** Push local changes to sync */
-  pushChange(sessionId: string, change: SessionChange): void;
+  /**
+   * Push local changes to sync.
+   *
+   * Implementations that encrypt or send asynchronously return a promise that
+   * settles when the change has actually been handed to the transport, and may
+   * resolve with a `PushChangeOutcome` describing what happened. Callers that
+   * only fire-and-forget may ignore both; a caller that has to know the row
+   * reached the wire before it disconnects (the headless node's shutdown flush)
+   * awaits it and inspects the outcome.
+   */
+  pushChange(
+    sessionId: string,
+    change: SessionChange,
+  ): void | Promise<void | PushChangeOutcome>;
 
   /** Bulk update the sessions index with existing sessions */
   syncSessionsToIndex?(sessions: SessionIndexData[], options?: {
@@ -413,6 +447,31 @@ export interface SyncProvider {
   isIndexReady?(): boolean;
 
   /**
+   * A counter that increases every time the index socket becomes usable again.
+   *
+   * The server binds a create-session claim to the SOCKET that received the
+   * broadcast: a response sent on a later socket is rejected and the requester
+   * is told the host vanished. Sampling `isIndexReady()` cannot detect that,
+   * because a full down-and-up cycle between two samples reads as "still
+   * ready". A caller that must not act on a claim it may no longer hold records
+   * this value when the broadcast arrives and compares it before responding.
+   *
+   * Monotonic within a provider instance; never reset.
+   */
+  getConnectionGeneration?(): number;
+
+  /**
+   * Subscribe to "the index socket is usable again", with the generation then
+   * in force. Returns an unsubscribe.
+   *
+   * Fires on every reconnect, including ones this process did not initiate --
+   * which is the point. Work that could not be sent on the socket that went
+   * away has to be retried when a socket comes back, not when the caller next
+   * happens to do something.
+   */
+  onConnectionGenerationChange?(callback: (generation: number) => void): () => void;
+
+  /**
    * Wait for the index to reach the `ready` state (open + stable). Resolves
    * immediately if already ready. Rejects after `timeoutMs` otherwise. Used by
    * the reconnect cascade to gate other providers on a verified-healthy index.
@@ -522,7 +581,14 @@ export type SessionChange =
 // We sync the raw database format; rendering uses canonical ai_transcript_events
 
 /** Queued prompt for cross-device sync */
+export interface RemoteTurnOptions {
+  mode?: "agent" | "planning";
+  model?: string;
+  effortLevel?: import("../ai/server/effortLevels").EffortLevel;
+}
+
 export interface SyncedQueuedPrompt {
+  options?: RemoteTurnOptions;
   id: string;           // Unique ID for this queued item
   prompt: string;       // The user's message
   timestamp: number;    // When queued
@@ -766,6 +832,18 @@ export interface CreateSessionRequest {
   targetDeviceId?: string;
   /** Timestamp when request was created */
   timestamp: number;
+  /**
+   * `getConnectionGeneration()` as it was when this broadcast ARRIVED, before
+   * the provider decrypted it.
+   *
+   * The server binds the claim to the socket that received the broadcast, and
+   * decryption is asynchronous -- so a disconnect during that await delivers a
+   * request whose claim is already gone, and a listener that samples the
+   * generation on delivery reads the NEW one and concludes it still holds the
+   * claim. Compare against this instead. Absent from providers that do not
+   * track a generation.
+   */
+  receiptGeneration?: number;
 }
 
 /**

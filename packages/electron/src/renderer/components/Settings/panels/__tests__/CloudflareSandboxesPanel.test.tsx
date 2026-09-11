@@ -8,7 +8,7 @@ vi.mock('@nimbalyst/runtime/ui/icons/MaterialSymbol', () => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
 }));
 
-type Handler = (payload?: unknown) => unknown;
+type Handler = (payload?: unknown, updates?: any) => unknown;
 
 const handlers = new Map<string, Handler>();
 
@@ -33,10 +33,10 @@ beforeEach(() => {
   setHandler(CLOUDFLARE_SANDBOX_CHANNELS.getDeployment, () => ({ success: true, data: null }));
 
   (window as unknown as { electronAPI: { invoke: Handler } }).electronAPI = {
-    invoke: ((channel: string, payload?: unknown) => {
+    invoke: ((channel: string, payload?: unknown, updates?: any) => {
       const handler = handlers.get(channel);
       if (!handler) throw new Error(`Unexpected channel ${channel}`);
-      return Promise.resolve(handler(payload));
+      return Promise.resolve(handler(payload, updates));
     }) as unknown as Handler,
   };
 });
@@ -49,6 +49,26 @@ function accountOptionValues(): string[] {
 }
 
 describe('CloudflareSandboxesPanel', () => {
+  it('restores explicit profile/account choices on remount and isolates projects', async () => {
+    const saved = new Map<string, unknown>();
+    setHandler('workspace:get-state', path => saved.get(path as string) ?? {});
+    setHandler('workspace:update-state', (path, updates) => { saved.set(path as string, updates); return updates; });
+    setHandler(CLOUDFLARE_SANDBOX_CHANNELS.listAccounts, () => ({success: true, data: [{id: 'account-a', name: 'Account A'}]}));
+    const first = render(<CloudflareSandboxesPanel workspacePath="/project-a" />);
+    fireEvent.click(await screen.findByTestId('cloudflare-profile-personal'));
+    await screen.findByTestId('cloudflare-account-select');
+    fireEvent.change(screen.getByTestId('cloudflare-account-select'), {target: {value: 'account-a'}});
+    await waitFor(() => expect(saved.get('/project-a')).toEqual({cloudflareSandboxSelection: {profileName: 'personal', accountId: 'account-a'}}));
+    first.unmount();
+    const second = render(<CloudflareSandboxesPanel workspacePath="/project-a" />);
+    await waitFor(() => expect((screen.getByTestId('cloudflare-account-select') as HTMLSelectElement).value).toBe('account-a'));
+    expect((screen.getByTestId('cloudflare-deploy') as HTMLButtonElement).disabled).toBe(true);
+    second.unmount();
+    render(<CloudflareSandboxesPanel workspacePath="/project-b" />);
+    await screen.findByTestId('cloudflare-profile-personal');
+    expect(screen.queryByTestId('cloudflare-account-select')).toBeNull();
+  });
+
   it('ignores an account response that belongs to a profile the user already left', async () => {
     const pending: { resolvePersonal?: (value: unknown) => void } = {};
     setHandler(CLOUDFLARE_SANDBOX_CHANNELS.listAccounts, (payload) => {

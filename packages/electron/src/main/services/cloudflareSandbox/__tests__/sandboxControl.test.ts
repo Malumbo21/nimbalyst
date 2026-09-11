@@ -20,6 +20,7 @@ import {
   ChildProcessControlClient,
   killInFlightHelpers,
   parseHelperResponse,
+  parseNodeStatusResponse,
   toContainerState,
   type SandboxControlTarget,
 } from "../sandboxControl";
@@ -42,6 +43,52 @@ const OK = {
     persistence: "ephemeral",
   },
 };
+
+const NODE_OK = { success: true, data: { ...OK.data, node: {
+  running: true, processId: 'node-1', startedAt: 123, exitCode: null, recentLog: 'ready',
+} } };
+
+it('passes node requests through stdin payloads and requires a complete node response', async () => {
+  const run = vi.fn(async () => NODE_OK);
+  const client = new ChildProcessControlClient(run);
+  const provision = { files: [{ path: '/home/nimbalyst/config', content: 'credential-secret' }], allowedHosts: ['github.com'] };
+  expect(await client.provision(TARGET, provision)).toEqual(NODE_OK.data);
+  expect(await client.startNode(TARGET, { configPath: '/home/nimbalyst/config' })).toEqual(NODE_OK.data);
+  expect(await client.nodeStatus(TARGET)).toEqual(NODE_OK.data);
+  expect(await client.stopNode(TARGET, { discardEphemeralData: true })).toEqual(NODE_OK.data);
+  expect(run.mock.calls.map(call => (call as unknown[])[1])).toEqual([
+    { wranglerModulePath: TARGET.wranglerModulePath, configPath: TARGET.configPath, operation: 'provision', request: provision },
+    { wranglerModulePath: TARGET.wranglerModulePath, configPath: TARGET.configPath, operation: 'startNode', request: { configPath: '/home/nimbalyst/config' } },
+    { wranglerModulePath: TARGET.wranglerModulePath, configPath: TARGET.configPath, operation: 'nodeStatus' },
+    { wranglerModulePath: TARGET.wranglerModulePath, configPath: TARGET.configPath, operation: 'stopNode', request: { discardEphemeralData: true } },
+  ]);
+  expect(() => client.stopNode(TARGET, {} as never)).toThrow(SandboxOperationError);
+  expect(run).toHaveBeenCalledTimes(4);
+});
+
+it('strictly rejects malformed or inconsistent node status fields', () => {
+  for (const node of [undefined, null, [], {},
+    ...Object.entries({ running: 'true', processId: 123, startedAt: '123', exitCode: 1.5, recentLog: null }).map(([key, value]) => ({ ...NODE_OK.data.node, [key]: value })),
+    { ...NODE_OK.data.node, processId: null },
+    { ...NODE_OK.data.node, exitCode: 0 },
+    { ...NODE_OK.data.node, recentLog: 'x'.repeat(5000) },
+  ]) expect(() => parseNodeStatusResponse({ success: true, data: { ...NODE_OK.data, node } })).toThrow(SandboxOperationError);
+  for (const change of [{ sandboxId: 'other' }, { state: 'stopped' }, { persistence: 'durable' }, { lastChangedAt: NaN }, { sleepAfterSeconds: -1 }]) {
+    expect(() => parseNodeStatusResponse({ success: true, data: { ...NODE_OK.data, ...change } })).toThrow(SandboxOperationError);
+  }
+  for (const code of ['node-not-provisioned', 'node-start-failed', 'grant-failed']) {
+    expect(() => parseNodeStatusResponse({ success: false, error: code, reason: code })).toThrow(expect.objectContaining({ sandboxErrorCode: code }));
+  }
+});
+
+it('measures replacement-character logs in UTF-8 bytes at the Worker limit', () => {
+  const invalid = new TextDecoder().decode(new Uint8Array([0xff]));
+  const recentLog = invalid.repeat(1365) + 'x';
+  expect(Buffer.byteLength(recentLog)).toBe(4096);
+  const frame = { success: true, data: { ...NODE_OK.data, node: { ...NODE_OK.data.node, recentLog } } };
+  expect(parseNodeStatusResponse(frame).node.recentLog).toBe(recentLog);
+  expect(() => parseNodeStatusResponse({ success: true, data: { ...frame.data, node: { ...frame.data.node, recentLog: recentLog + 'x' } } })).toThrow(SandboxOperationError);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

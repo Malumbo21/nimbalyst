@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 <!-- New features go here -->
-- Settings > Application > Cloudflare Sandboxes: sign in with your local Wrangler profile, pick an account, and review, deploy, wake, stop or delete a private Nimbalyst sandbox in your own Cloudflare account.
+- Run sessions in your own Cloudflare sandbox with machine navigation, the shared composer, attachments and Actions, and profile/account selections remembered per project.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

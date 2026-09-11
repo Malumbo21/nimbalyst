@@ -10,14 +10,33 @@ import type {
 // Both are mocked so these tests exercise the service's own decisions.
 vi.mock("../deploymentStore", () => ({
   readDeployment: vi.fn(),
+  readNodeId: vi.fn(() => null),
   readWorkerName: vi.fn(),
   requireTarget: vi.fn(),
   updateDeployment: vi.fn(),
   updateDeploymentIfUnchanged: vi.fn(),
+  updateDeploymentNode: vi.fn(),
+  clearDeploymentNode: vi.fn(),
+  readPendingRevocations: vi.fn(() => []),
+  pendingRevocationsAtCapacity: vi.fn(() => false),
+  recordPendingRevocation: vi.fn(() => true),
+  clearRevokedNode: vi.fn(),
+  clearPendingRevocation: vi.fn(),
   writeDeployment: vi.fn(),
   clearDeployment: vi.fn(),
   getInstallationId: vi.fn(() => "install-1"),
 }));
+// The node environment reaches sync, auth and credential storage. Mocked at
+// their own module paths — never through the runtime barrel, which drags the
+// whole editor tree in for nothing.
+vi.mock("../../SyncManager", () => ({ getSyncProvider: vi.fn(() => null) }));
+vi.mock("../../StytchAuthService", () => ({
+  getPersonalSessionJwt: vi.fn(() => "personal.jwt"),
+  getPersonalOrgId: vi.fn(() => "org-7"),
+  getPersonalUserId: vi.fn(() => "member-9"),
+}));
+vi.mock("../../CredentialService", () => ({ getEncryptionKeySeed: vi.fn(() => "seed-abc") }));
+vi.mock("../../../utils/store", () => ({ getSessionSyncConfig: vi.fn(() => null) }));
 vi.mock("../profiles", () => ({
   listAccounts: vi.fn(),
   listProfiles: vi.fn(),
@@ -53,6 +72,7 @@ const SAVED: SandboxDeployment = {
   revision: "rev-1",
   status: "deployed",
   container: { status: "stopped", observedAt: null, message: null },
+  node: null,
   profileName: "work",
   account: ACCOUNT,
   access: "private-rpc",
@@ -216,6 +236,7 @@ describe("deploy", () => {
     });
 
     const [args] = vi.mocked(runWrangler).mock.calls[0] as [string[]];
+    expect(args.slice(0, 3)).toEqual(['deploy', '--containers-rollout', 'immediate']);
     expect(args).toContain("--profile");
     expect(args[args.indexOf("--profile") + 1]).toBe("work");
   });
@@ -641,5 +662,392 @@ describe("review regressions", () => {
     expect(writeControlConfig).toHaveBeenCalledWith({workerName:WORKER_NAME,accountId:SAVED.account.id});
     expect(args[args.indexOf("--profile") + 1]).toBe(SAVED.profileName);
     expect(vi.mocked(runWrangler).mock.calls[0][1]).toMatchObject({cwd:"/tmp/profiles/work"});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Headless node
+// ---------------------------------------------------------------------------
+
+const NODE_CREDENTIAL = {
+  nodeId: "node-1",
+  userId: "member-9",
+  orgId: "org-7",
+  refreshToken: "refresh-abc",
+  refreshExpiresAt: 4_000_000,
+  accessToken: "nimnode_v1~kid~payload~sig",
+  accessTokenExpiresAt: 1_900_000,
+};
+
+/**
+ * What `deploymentStore` actually hands back: identity, and the "not running"
+ * observation default. It never returns a live observation, so a fixture that
+ * claimed one would let a bug through by making the store look like the source
+ * of process state.
+ */
+const CONNECTED_NODE = {
+  running: false,
+  processId: null,
+  startedAt: null,
+  exitCode: null,
+  recentLog: "",
+  nodeId: "node-1",
+  deviceId: "sandbox-dep-1",
+  provisionedAt: "2026-09-10T12:00:00.000Z",
+  workspace: {
+    projectId: "/Users/me/sources/stravu-editor",
+    repoUrl: "https://github.com/nimbalyst/nimbalyst.git",
+    branch: "main",
+  },
+};
+
+function nodeEnvironment(overrides: Record<string, unknown> = {}) {
+  return {
+    syncServerUrl: () => "https://sync.nimbalyst.com",
+    personalIdentity: () => ({ personalOrgId: "org-7", personalUserId: "member-9" }),
+    encryptionKeySeed: () => "seed-abc",
+    readClaudeCredential: vi.fn(async () => '{"claudeAiOauth":{"accessToken":"a"}}'),
+    issueNodeCredential: vi.fn(async () => NODE_CREDENTIAL),
+    revokeNodeCredential: vi.fn(async () => undefined),
+    git: {
+      remoteUrl: async () => "git@github.com:nimbalyst/nimbalyst.git",
+      branch: async () => "main",
+    },
+    requestRemoteSession: vi.fn(async () => "session-42"),
+    ...overrides,
+  } as never;
+}
+
+function runningNodeStatus(running = true) {
+  return {
+    sandboxId: "personal",
+    state: "running",
+    lastChangedAt: 1_000,
+    sleepAfterSeconds: 600,
+    persistence: "ephemeral",
+    node: {
+      running,
+      processId: running ? "proc-1" : null,
+      startedAt: running ? 1_000 : null,
+      exitCode: null,
+      recentLog: "serve: joined index room",
+    },
+  };
+}
+
+describe("CloudflareSandboxService node operations", () => {
+  it("wakes, provisions and starts, then saves what it connected", async () => {
+    vi.mocked(store.updateDeploymentNode).mockImplementation(
+      (patch) => ({ ...SAVED, node: { ...CONNECTED_NODE, ...patch }, revision: "rev-2" } as SandboxDeployment),
+    );
+    const calls: string[] = [];
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment(),
+      control: {
+        wake: vi.fn(async () => { calls.push("wake"); return runningNodeStatus(); }),
+        provision: vi.fn(async () => { calls.push("provision"); return runningNodeStatus(false); }),
+        startNode: vi.fn(async () => { calls.push("startNode"); return runningNodeStatus(); }),
+      } as never,
+      now: () => new Date("2026-09-10T12:00:00.000Z"),
+    });
+
+    const response = await service.connectNode({ ...TARGET, workspacePath: "/Users/me/sources/stravu-editor" });
+
+    expect(response.success).toBe(true);
+    expect(calls).toEqual(["wake", "provision", "startNode"]);
+    const saved = vi.mocked(store.updateDeploymentNode).mock.calls[0][0];
+    expect(saved).toEqual({
+      nodeId: "node-1",
+      deviceId: "sandbox-dep-1",
+      provisionedAt: "2026-09-10T12:00:00.000Z",
+      workspace: { projectId: "/Users/me/sources/stravu-editor", branch: "main" },
+    });
+    // R-3b finding 6: identity only. No observation, and no repo URL, reaches
+    // the disk. `toEqual` rather than `toMatchObject` so an added field fails.
+    expect(response.success && response.data.node?.running).toBe(true);
+  });
+
+  it("refuses to connect with no personal sync identity, before touching the container", async () => {
+    const wake = vi.fn();
+    const service = new CloudflareSandboxService({
+      node: nodeEnvironment({ personalIdentity: () => null }),
+      control: { wake } as never,
+    });
+
+    const response = await service.connectNode({ ...TARGET, workspacePath: "/Users/me/repo" });
+
+    expect(response).toMatchObject({ success: false, error: { code: "not-authenticated" } });
+    expect(wake).not.toHaveBeenCalled();
+  });
+
+  it("does not observe the node while the container is asleep, which would wake it", async () => {
+    vi.mocked(store.readDeployment).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    const nodeStatus = vi.fn();
+    const service = new CloudflareSandboxService({
+      node: nodeEnvironment(),
+      control: {
+        status: vi.fn(async () => ({ ...runningNodeStatus(), state: "stopped" })),
+        nodeStatus,
+      } as never,
+    });
+
+    await service.getDeployment();
+
+    expect(nodeStatus).not.toHaveBeenCalled();
+  });
+
+  it("targets the create-session request at the node's device and returns the session id", async () => {
+    vi.mocked(store.requireTarget).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    const env = nodeEnvironment();
+    const service = new CloudflareSandboxService({ node: env, control: {} as never });
+
+    const response = await service.startRemoteSession({
+      ...TARGET,
+      workspacePath: "/Users/me/sources/stravu-editor",
+      prompt: "  add a readme  ",
+    });
+
+    expect(response).toMatchObject({ success: true, data: { sessionId: "session-42" } });
+    const sent = vi.mocked((env as never as { requestRemoteSession: ReturnType<typeof vi.fn> }).requestRemoteSession).mock.calls[0][0];
+    expect(sent).toMatchObject({
+      projectId: "/Users/me/sources/stravu-editor",
+      prompt: "add a readme",
+      targetDeviceId: "sandbox-dep-1",
+    });
+  });
+
+  it("will not start a remote session for a workspace the node was not connected for", async () => {
+    vi.mocked(store.requireTarget).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    const env = nodeEnvironment();
+    const service = new CloudflareSandboxService({ node: env, control: {} as never });
+
+    const response = await service.startRemoteSession({
+      ...TARGET,
+      workspacePath: "/Users/me/other-repo",
+      prompt: "go",
+    });
+
+    expect(response.success).toBe(false);
+    expect((env as never as { requestRemoteSession: ReturnType<typeof vi.fn> }).requestRemoteSession).not.toHaveBeenCalled();
+  });
+
+  it("reports node-not-provisioned rather than a generic failure when no node is connected", async () => {
+    vi.mocked(store.requireTarget).mockReturnValue(SAVED);
+    const service = new CloudflareSandboxService({ node: nodeEnvironment(), control: {} as never });
+
+    const response = await service.startRemoteSession({
+      ...TARGET,
+      workspacePath: "/Users/me/sources/stravu-editor",
+      prompt: "go",
+    });
+
+    expect(response).toMatchObject({ success: false, error: { code: "node-not-provisioned" } });
+  });
+
+  it("stops the node, revokes its credential, then forgets it", async () => {
+    vi.mocked(store.requireTarget).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    vi.mocked(store.clearDeploymentNode).mockReturnValue({ ...SAVED, node: null } as SandboxDeployment);
+    const order: string[] = [];
+    const env = nodeEnvironment({
+      revokeNodeCredential: vi.fn(async (id: string) => { order.push(`revoke:${id}`); }),
+    });
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: env,
+      control: {
+        stopNode: vi.fn(async () => { order.push("stopNode"); return runningNodeStatus(false); }),
+      } as never,
+    });
+
+    const response = await service.disconnectNode({ ...TARGET, discardEphemeralData: true });
+
+    expect(response.success).toBe(true);
+    expect(order).toEqual(["stopNode", "revoke:node-1"]);
+    expect(store.clearDeploymentNode).toHaveBeenCalled();
+  });
+
+  it("keeps the node record when revoking fails, so the credential is still reachable", async () => {
+    vi.mocked(store.requireTarget).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment({
+        revokeNodeCredential: vi.fn(async () => { throw new Error("sync server down"); }),
+      }),
+      control: { stopNode: vi.fn(async () => runningNodeStatus(false)) } as never,
+    });
+
+    const response = await service.disconnectNode({ ...TARGET, discardEphemeralData: true });
+
+    expect(response.success).toBe(false);
+    expect(store.clearDeploymentNode).not.toHaveBeenCalled();
+  });
+
+  it("refuses a disconnect that did not carry the discard warning's consent", async () => {
+    const stopNode = vi.fn();
+    const service = new CloudflareSandboxService({
+      node: nodeEnvironment(),
+      control: { stopNode } as never,
+    });
+
+    const response = await service.disconnectNode({ ...TARGET } as never);
+
+    expect(response).toMatchObject({ success: false, error: { code: "confirmation-required" } });
+    expect(stopNode).not.toHaveBeenCalled();
+  });
+});
+
+describe("CloudflareSandboxService node safety (R-3b)", () => {
+  it("keeps the node and its credential when stopNode reports the process still running", async () => {
+    // S3a returns a running node when SIGTERM has not completed. Treating that
+    // as done would revoke the credential under a live agent and then hide it.
+    vi.mocked(store.requireTarget).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    const env = nodeEnvironment();
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: env,
+      control: { stopNode: vi.fn(async () => runningNodeStatus(true)) } as never,
+    });
+
+    const response = await service.disconnectNode({ ...TARGET, discardEphemeralData: true });
+
+    expect(response.success).toBe(false);
+    expect(store.clearDeploymentNode).not.toHaveBeenCalled();
+    expect(
+      (env as never as { revokeNodeCredential: ReturnType<typeof vi.fn> }).revokeNodeCredential,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("shows a node as not running once the container is observed stopped", async () => {
+    // The saved record carries no observation, so a stopped container yields
+    // the default. The panel offers Connect again instead of a session form.
+    vi.mocked(store.readDeployment).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    vi.mocked(store.updateDeploymentIfUnchanged).mockImplementation(
+      (_revision, patch) =>
+        ({ ...SAVED, node: CONNECTED_NODE, ...patch, revision: "rev-2" } as SandboxDeployment),
+    );
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment(),
+      control: {
+        status: vi.fn(async () => ({ ...runningNodeStatus(), state: "stopped" })),
+        nodeStatus: vi.fn(),
+      } as never,
+    });
+
+    const response = await service.getDeployment();
+
+    expect(response.success && response.data?.node?.running).toBe(false);
+  });
+
+  it("redacts token-shaped text out of the node's log before it leaves the process", async () => {
+    vi.mocked(store.requireTarget).mockReturnValue({ ...SAVED, node: CONNECTED_NODE } as SandboxDeployment);
+    const hostile = {
+      ...runningNodeStatus(true),
+      node: {
+        ...runningNodeStatus(true).node,
+        recentLog: "auth: nimnode_v1~kid~payload~sig and Bearer abc.def.ghi and sk-ant-oat-secret",
+      },
+    };
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment(),
+      control: { nodeStatus: vi.fn(async () => hostile) } as never,
+    });
+
+    const response = await service.nodeStatus(TARGET);
+
+    const log = response.success ? response.data.node?.recentLog ?? "" : "";
+    expect(log).not.toContain("nimnode_v1~kid~payload~sig");
+    expect(log).not.toContain("sk-ant-oat-secret");
+    expect(log).not.toContain("abc.def.ghi");
+    expect(log).toContain("[redacted]");
+  });
+
+  it("refuses to provision against a sync server the sandbox cannot reach", async () => {
+    // A dev build pointed at localhost would resolve that inside the container.
+    const wake = vi.fn();
+    const env = nodeEnvironment({ syncServerUrl: () => "http://localhost:8790" });
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: env,
+      control: { wake } as never,
+    });
+
+    const response = await service.connectNode({
+      ...TARGET,
+      workspacePath: "/Users/me/sources/stravu-editor",
+    });
+
+    expect(response).toMatchObject({ success: false, error: { code: "grant-failed" } });
+    expect(wake).not.toHaveBeenCalled();
+    expect(
+      (env as never as { issueNodeCredential: ReturnType<typeof vi.fn> }).issueNodeCredential,
+    ).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteDeployment credential cleanup (R-3b re-probe finding 2)", () => {
+  beforeEach(() => {
+    // `deleteDeployment` reads its target through `requireTarget`, not
+    // `readDeployment`.
+    const withNode = {
+      ...SAVED,
+      node: { ...CONNECTED_NODE, nodeId: "node-1" },
+    } as SandboxDeployment;
+    vi.mocked(store.readDeployment).mockReturnValue(withNode);
+    vi.mocked(store.requireTarget).mockReturnValue(withNode);
+  });
+
+  it("queues the node id for cleanup before clearing the deployment", async () => {
+    const order: string[] = [];
+    vi.mocked(store.recordPendingRevocation).mockImplementation((id) => {
+      order.push(`record:${id}`);
+      return true;
+    });
+    vi.mocked(store.clearDeployment).mockImplementation(() => { order.push("clear"); });
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment({
+        revokeNodeCredential: vi.fn(async () => { throw new Error("server down"); }),
+      }),
+      control: {} as never,
+    });
+
+    const response = await service.deleteDeployment({ ...TARGET, confirmed: true });
+
+    expect(response.success).toBe(true);
+    // The record is the only other place the id exists. Clearing first would
+    // destroy the last pointer to a credential that is still live.
+    expect(order).toEqual(["record:node-1", "clear"]);
+  });
+
+  it("keeps the deployment when the cleanup queue will not take the id either", async () => {
+    vi.mocked(store.recordPendingRevocation).mockReturnValue(false);
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment({
+        revokeNodeCredential: vi.fn(async () => { throw new Error("server down"); }),
+      }),
+      control: {} as never,
+    });
+
+    const response = await service.deleteDeployment({ ...TARGET, confirmed: true });
+
+    expect(response.success).toBe(false);
+    expect(store.clearDeployment).not.toHaveBeenCalled();
+  });
+
+  it("does not queue anything when the revoke succeeds", async () => {
+    const service = new CloudflareSandboxService({
+      artifacts: availableArtifacts(),
+      node: nodeEnvironment(),
+      control: {} as never,
+    });
+
+    await service.deleteDeployment({ ...TARGET, confirmed: true });
+
+    expect(store.recordPendingRevocation).not.toHaveBeenCalled();
+    expect(store.clearDeployment).toHaveBeenCalled();
   });
 });

@@ -109,3 +109,17 @@ describe("credential redaction", () => {
     expect(warn.mock.calls.flat().join(" ")).not.toContain(TOKEN);
   });
 });
+
+describe("node error codes", () => {
+  // A code that is not in the MESSAGES table is not recognised as a carrier and
+  // silently normalises to `unknown`, which is how the UI loses the difference
+  // between "the container slept" and "something went wrong".
+  it.each(["node-not-provisioned", "node-start-failed", "grant-failed"] as const)(
+    "preserves %s through normalisation, with a message",
+    (code) => {
+      const error = toSandboxError(new SandboxOperationError(code, "node-op"));
+      expect(error.code).toBe(code);
+      expect(error.message.length).toBeGreaterThan(0);
+    },
+  );
+});

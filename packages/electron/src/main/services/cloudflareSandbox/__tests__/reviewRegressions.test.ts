@@ -81,7 +81,7 @@ describe("B2 — the artifact must not change between review and deploy", () => 
         path.join(dir, "manifest.json"),
         JSON.stringify({
           schemaVersion: 1,
-          sdkVersion: "0.12.9",
+          sdkVersion: "0.13.0-next.751.1",
           workerSha256: createHash("sha256").update(body).digest("hex"),
           helperSha256: createHash("sha256")
             .update("export const h = 1;\n")

@@ -30,6 +30,7 @@ import {
   type SandboxDeploymentTarget,
 } from '../../../../shared/cloudflareSandbox';
 import { invokeSandbox } from './CloudflareSandboxClient';
+import { CloudflareSandboxNodePanel } from './CloudflareSandboxNodePanel';
 
 type LifecycleOperation = 'none' | 'waking' | 'stopping' | 'deleting';
 type ConfirmKind = 'stop' | 'delete';
@@ -281,6 +282,13 @@ export function CloudflareSandboxStatusCard({
         <p className="text-[12px] text-[var(--nim-error)] mt-2" role="alert">
           {error.message}
         </p>
+      )}
+
+      {deployment.status === 'deployed' && (
+        <CloudflareSandboxNodePanel
+          deployment={deployment}
+          onDeploymentChange={onDeploymentChange}
+        />
       )}
     </section>
   );

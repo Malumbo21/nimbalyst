@@ -832,6 +832,7 @@ export interface SessionMetadata {
 
 /** Encrypted queued-prompt preview retained in the personal session index. */
 export interface IndexEncryptedQueuedPrompt {
+  options?: { mode?: "agent" | "planning"; model?: string; effortLevel?: string };
   id: string;
   encryptedPrompt: string;
   iv: string;

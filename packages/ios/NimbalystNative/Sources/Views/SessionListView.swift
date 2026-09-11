@@ -12,6 +12,7 @@ import GRDB
 public struct SessionListView: View {
     @EnvironmentObject var appState: AppState
     public let project: Project
+    public let hostDeviceId: String?
     @Binding private var selection: WorkspaceSelection?
 
     @StateObject private var model = SessionListWindowModel()
@@ -21,8 +22,9 @@ public struct SessionListView: View {
     @State private var collapsedMetaAgents: Set<String> = []
     @State private var selectedTab: ProjectTab = .sessions
 
-    public init(project: Project, selection: Binding<WorkspaceSelection?>) {
+    public init(project: Project, selection: Binding<WorkspaceSelection?>, hostDeviceId: String? = nil) {
         self.project = project
+        self.hostDeviceId = hostDeviceId
         _selection = selection
     }
 
@@ -66,7 +68,8 @@ public struct SessionListView: View {
             includeArchived: showArchived,
             searchText: searchText.isEmpty ? nil : searchText,
             phase: phaseFilter,
-            metaAgentEnabled: metaAgentEnabled
+            metaAgentEnabled: metaAgentEnabled,
+            hostDeviceId: hostDeviceId
         )
     }
 
@@ -658,7 +661,8 @@ public struct SessionListView: View {
                 projectId: project.id,
                 initialPrompt: nil,
                 provider: ModelPreferences.providerFromModelId(selectedModelId),
-                model: selectedModelId
+                model: selectedModelId,
+                targetDeviceId: hostDeviceId
             )
             AnalyticsManager.shared.capture("mobile_session_created", properties: [
                 "model": selectedModelId ?? "default"
@@ -681,7 +685,8 @@ public struct SessionListView: View {
                 initialPrompt: nil,
                 sessionType: "workstream",
                 provider: ModelPreferences.providerFromModelId(selectedModelId),
-                model: selectedModelId
+                model: selectedModelId,
+                targetDeviceId: hostDeviceId
             )
             AnalyticsManager.shared.capture("mobile_workstream_created")
         } catch {
@@ -702,7 +707,8 @@ public struct SessionListView: View {
                 initialPrompt: nil,
                 provider: ModelPreferences.providerFromModelId(selectedModelId),
                 model: selectedModelId,
-                agentRole: "meta-agent"
+                agentRole: "meta-agent",
+                targetDeviceId: hostDeviceId
             )
             AnalyticsManager.shared.capture("mobile_meta_agent_created", properties: [
                 "model": selectedModelId ?? "default"
@@ -724,7 +730,8 @@ public struct SessionListView: View {
                 initialPrompt: nil,
                 parentSessionId: parentId,
                 provider: ModelPreferences.providerFromModelId(selectedModelId),
-                model: selectedModelId
+                model: selectedModelId,
+                targetDeviceId: hostDeviceId
             )
             AnalyticsManager.shared.capture("mobile_child_session_created")
             // Auto-expand the parent workstream
@@ -761,7 +768,8 @@ public struct SessionListView: View {
             try sync.createSession(
                 projectId: project.id,
                 initialPrompt: nil,
-                sessionType: "workstream"
+                sessionType: "workstream",
+                targetDeviceId: hostDeviceId
             )
             AnalyticsManager.shared.capture("mobile_convert_to_workstream")
 

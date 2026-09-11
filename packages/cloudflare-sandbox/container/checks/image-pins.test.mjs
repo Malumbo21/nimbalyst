@@ -30,6 +30,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 
 import { CONTEXT_ONLY_PATHS, isSecretFileName } from '../buildContextAllowlist.mjs';
 import { manifestPathFor, stageBuildContext } from '../stage-build-context.mjs';
@@ -38,9 +39,23 @@ const CONTAINER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const dockerfile = readFileSync(path.join(CONTAINER_DIR, 'Dockerfile'), 'utf8');
 const imageConfig = JSON.parse(readFileSync(path.join(CONTAINER_DIR, 'image.config.json'), 'utf8'));
 
+test('preview control probe bundles for the image without host npm dependencies', async () => {
+  const result = await build({ entryPoints: [path.join(CONTAINER_DIR, 'checks/preview-control-probe.mjs')], bundle: true, platform: 'node', format: 'esm', target: 'node24', write: false, metafile: true });
+  const output = Object.values(result.metafile.outputs)[0];
+  assert.ok(output.imports.every(entry => entry.path.startsWith('node:')));
+});
+
 test('the Dockerfile builds the sandbox version image.config.json declares', () => {
   const { sdkVersion, imageRef } = imageConfig.sandbox;
   assert.equal(imageRef, `docker.io/cloudflare/sandbox:${sdkVersion}`);
+  const workerPackage = JSON.parse(readFileSync(path.join(CONTAINER_DIR, '../package.json'), 'utf8'));
+  const release = JSON.parse(readFileSync(path.join(CONTAINER_DIR, '../release.json'), 'utf8'));
+  assert.equal(sdkVersion, workerPackage.dependencies['@cloudflare/sandbox']);
+  assert.equal(sdkVersion, release.sdkVersion);
+  const desktop = readFileSync(path.join(CONTAINER_DIR, '../../electron/src/main/services/cloudflareSandbox/artifactProvider.ts'), 'utf8');
+  assert.equal(/SANDBOX_SDK_VERSION = ["']([^"']+)["']/.exec(desktop)?.[1], sdkVersion, 'desktop artifact parser must accept the pinned Worker SDK');
+  assert.match(sdkVersion, /^0\.13\.0-next\./);
+  assert.deepEqual(imageConfig.sandbox.entrypoint, ['/usr/bin/tini', '--', '/container-server/sandbox']);
   assert.match(dockerfile, new RegExp(`^ARG SANDBOX_VERSION=${sdkVersion}$`, 'm'));
 });
 
@@ -67,7 +82,7 @@ test('the Dockerfile installs the checksum-pinned Node the repo requires', () =>
 });
 
 test('the Dockerfile leaves the base entrypoint alone and never copies the checkout', () => {
-  // The server stays PID 1, but cannot provide a root execution path to agents.
+  // The inherited tini and control server cannot provide a root execution path.
   assert.doesNotMatch(dockerfile, /^\s*(ENTRYPOINT|CMD)\s/m);
   assert.match(dockerfile, /^USER 10001:10001$/m);
   const finalStage = dockerfile.slice(dockerfile.indexOf('FROM ${SANDBOX_BASE_IMAGE}'));
@@ -120,7 +135,7 @@ function makeFixtureRepo(root) {
     mkdirSync(path.dirname(abs), { recursive: true });
     writeFileSync(abs, contents);
   };
-  write('package.json', JSON.stringify({ name: 'fixture', workspaces: ['packages/node'] }));
+  write('package.json', JSON.stringify({ name: 'fixture', workspaces: ['packages/node', 'packages/collab-protocol'] }));
   write('package-lock.json', '{}');
   // `packages/tracker-core/tsconfig.json` extends this. Its absence is what
   // broke the first real image build.
@@ -133,6 +148,7 @@ function makeFixtureRepo(root) {
     write(`packages/${pkg}/src/index.ts`, 'export const ok = true;\n');
   }
   write('packages/runtime/tsconfig.node.json', '{}');
+  write('packages/collab-protocol/tsconfig.build.json', '{"extends":"./tsconfig.json","compilerOptions":{"outDir":"dist"}}');
   write('packages/runtime/scripts/add-node-extensions.mjs', '// noop\n');
   write('packages/node/nimbalyst-node.config.example.json', '{}');
   write('packages/electron/src/main/database/sqlite/schemas/0001_initial.sql', 'select 1;\n');
@@ -153,6 +169,10 @@ test('staging a clean fixture succeeds and hashes file contents', () => {
     const first = stageBuildContext({ repoRoot: repo, outDir: path.join(tmp, 'out') });
     assert.ok(first.fileCount > 0);
     assert.ok(first.files.every((f) => /^[0-9a-f]{64}$/.test(f.sha256)));
+    for (const rel of ['packages/collab-protocol/tsconfig.build.json', 'packages/collab-protocol/package.json']) {
+      assert.ok(first.files.some(file => file.path === rel), `missing protocol build input: ${rel}`);
+      assert.equal(readFileSync(path.join(tmp, 'out', rel), 'utf8'), readFileSync(path.join(repo, rel), 'utf8'));
+    }
 
     // A same-length edit: a size-keyed digest would not notice this.
     const target = path.join(repo, 'packages/node/src/index.ts');

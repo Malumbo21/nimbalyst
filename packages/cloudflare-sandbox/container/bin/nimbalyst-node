@@ -33,6 +33,22 @@ if [ "${1:-}" = "--smoke" ]; then
   shift
 fi
 
+# HTTPS egress is intercepted by Cloudflare. Trust only its fixed runtime CA,
+# never a certificate path or TLS override inherited from the caller. Node's
+# extra CA is additive; curl/Git/OpenSSL need a complete bundle. Assemble a
+# process-local bundle without requiring another write to the system store.
+RUNTIME_CA=/etc/cloudflare/certs/cloudflare-containers-ca.crt
+if [ -r "${RUNTIME_CA}" ]; then
+  ca_bundle="$(mktemp /tmp/nimbalyst-ca.XXXXXX)"
+  cat /etc/ssl/certs/ca-certificates.crt "${RUNTIME_CA}" > "${ca_bundle}"
+  chmod 0644 "${ca_bundle}"
+  set -- NODE_EXTRA_CA_CERTS="${RUNTIME_CA}" SSL_CERT_FILE="${ca_bundle}" \
+    CURL_CA_BUNDLE="${ca_bundle}" REQUESTS_CA_BUNDLE="${ca_bundle}" GIT_SSL_CAINFO="${ca_bundle}" \
+    "${NODE_BIN}" "${target}" "$@"
+else
+  set -- "${NODE_BIN}" "${target}" "$@"
+fi
+
 if [ "$(id -u)" = "0" ]; then
   # Also safe when invoked explicitly by an administrator outside normal startup.
   # --bounding-set -all as well as the uid change: dropping to uid 10001 leaves
@@ -41,7 +57,7 @@ if [ "$(id -u)" = "0" ]; then
   exec setpriv --no-new-privs --bounding-set -all \
     --reuid="${RUN_USER}" --regid="${RUN_USER}" --init-groups \
     env -i HOME="${RUN_HOME}" PATH="/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 \
-    "${NODE_BIN}" "${target}" "$@"
+    "$@"
 fi
 
 # The ordinary path: the image sets USER 10001, so the runner is already
@@ -57,4 +73,4 @@ fi
 # target rather than the permission to reach it.
 exec setpriv --no-new-privs \
   env -i HOME="${RUN_HOME}" PATH="/usr/local/bin:/usr/bin:/bin" LANG=C.UTF-8 \
-  "${NODE_BIN}" "${target}" "$@"
+  "$@"

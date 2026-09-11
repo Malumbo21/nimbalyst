@@ -33,7 +33,7 @@ async function writeArtifact(image: string | null): Promise<void> {
     path.join(dir, "manifest.json"),
     JSON.stringify({
       schemaVersion: 1,
-      sdkVersion: "0.12.9",
+      sdkVersion: "0.13.0-next.751.1",
       workerSha256: createHash("sha256").update(worker).digest("hex"),
       helperSha256: createHash("sha256").update(helper).digest("hex"),
       image,
@@ -49,12 +49,17 @@ afterEach(async () => {
 });
 
 describe("parseManifest", () => {
+  it("rejects stable SDK artifacts after the preview protocol migration", () => {
+    expect(() => parseManifest(JSON.stringify({
+      schemaVersion: 1, sdkVersion: '0.12.9', workerSha256: 'a'.repeat(64), helperSha256: 'b'.repeat(64), image: DIGEST_IMAGE,
+    }))).toThrow(SandboxOperationError);
+  });
   it("rejects a mutable tag, which could be repointed after the user reviewed it", () => {
     expect(() =>
       parseManifest(
         JSON.stringify({
           schemaVersion: 1,
-          sdkVersion: "0.12.9",
+          sdkVersion: "0.13.0-next.751.1",
           workerSha256: "a".repeat(64),
           helperSha256: "b".repeat(64),
           image: "docker.io/nimbalyst/sandbox:1.0.0",
@@ -68,7 +73,7 @@ describe("parseManifest", () => {
       parseManifest(
         JSON.stringify({
           schemaVersion: 1,
-          sdkVersion: "0.12.9",
+          sdkVersion: "0.13.0-next.751.1",
           workerSha256: "a".repeat(64),
           helperSha256: "b".repeat(64),
           image: DIGEST_IMAGE,

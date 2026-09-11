@@ -12,6 +12,17 @@ final class IndexIngestionTests: XCTestCase {
     private let otherCrypto = CryptoManager(key: SymmetricKey(data: Data(repeating: 8, count: 32)))
     private let projectPath = "/test/ingestion"
 
+    func testActionDraftWaitsForMatchingCreationAndIndexRow() async throws {
+        let db = try DatabaseManager()
+        let sync = manager(db)
+        let requestId = try sync.createSession(projectId: projectPath, targetDeviceId: "sandbox-one", initialDraft: "Review these changes")
+        let response: [String: Any] = ["type": "createSessionResponseBroadcast", "response": ["requestId": requestId, "success": true, "sessionId": "created"]]
+        await sync.receiveIndexMessage(try JSONSerialization.data(withJSONObject: response))
+        _ = try await receive(sync, sessions: [try entry("created", updatedAt: 1)])
+        XCTAssertEqual(try db.session(byId: "created")?.draftInput, "Review these changes")
+        XCTAssertFalse(try db.session(byId: "created")?.isExecuting ?? true)
+    }
+
     private func manager(_ db: DatabaseManager) -> SyncManager {
         SyncManager(crypto: crypto, database: db, serverUrl: "https://invalid.example", userId: "test", registerDeviceCallbacks: false)
     }

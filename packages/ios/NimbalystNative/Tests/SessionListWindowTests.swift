@@ -19,6 +19,17 @@ final class SessionListWindowTests: XCTestCase {
 
     private let projectId = "/p"
 
+    func testMachineFilterKeepsOtherHostsOutOfWindow() throws {
+        let db = try makeDatabase()
+        try seed(db, count: 3)
+        try db.writer.write { database in
+            try database.execute(sql: "UPDATE sessions SET hostDeviceId = 'sandbox' WHERE id = 's-000001'")
+            try database.execute(sql: "UPDATE sessions SET hostDeviceId = 'desktop' WHERE id <> 's-000001'")
+        }
+        let page = try db.sessionListPage(filter: SessionListFilter(projectId: projectId, hostDeviceId: "sandbox"), after: nil, limit: 100)
+        XCTAssertEqual(page.items.map { $0.parent.id }, ["s-000001"])
+    }
+
     // MARK: - Fixtures
 
     private func makeDatabase() throws -> DatabaseManager {

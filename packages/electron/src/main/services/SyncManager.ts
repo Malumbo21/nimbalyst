@@ -1,4 +1,5 @@
 import { isRetainedSession } from '@nimbalyst/collab-protocol';
+import { remoteSessions } from './ai/remoteSessions';
 import Store from '../utils/privateSettingsStore';
 import { getProviderCredentials, subscribeProviderCredentialChanges } from './credentials/providerCredentials';
 /**
@@ -613,6 +614,7 @@ export async function initializeSync(baseStore: SessionStore): Promise<SessionSt
 
     // Store state
     state.provider = provider;
+    remoteSessions.setProvider(provider, encryptionKey);
     state.config = config;
     state.messageSyncHandler = messageSyncHandler;
 
@@ -1006,6 +1008,7 @@ export function getPersonalDocSyncConfig(): {
  * Shutdown sync and disconnect all sessions.
  */
 export function shutdownSync(): void {
+  remoteSessions.setProvider(null);
   shutdownSleepPrevention();
 
   if (state.sessionKeepAliveInterval) {

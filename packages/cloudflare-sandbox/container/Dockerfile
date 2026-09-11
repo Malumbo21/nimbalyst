@@ -26,12 +26,12 @@
 # Every version below is pinned in image.config.json; the two must agree, which
 # __tests__/imageContract.test.ts checks.
 
-ARG SANDBOX_VERSION=0.12.9
-# Pinned by digest, not by tag. A tag is mutable: `cloudflare/sandbox:0.12.9`
+ARG SANDBOX_VERSION=0.13.0-next.751.1
+# Pinned by digest, not by tag. A tag is mutable: `cloudflare/sandbox:next`
 # can be repushed, and the image under a deployed Worker would then change with
 # nothing in this repository changing. The digest is recorded in
 # image.config.json and was read from the registry API, not from a local pull.
-ARG SANDBOX_BASE_IMAGE=docker.io/cloudflare/sandbox:0.12.9@sha256:4a56a37a3cfd9b38d65bb4b5d0b341e6490a3a4c0226274ae4c1cca4948e85fe
+ARG SANDBOX_BASE_IMAGE=docker.io/cloudflare/sandbox:0.13.0-next.751.1@sha256:712d12b2bd6f91ae66d83cebd9f7a0bfa684ae3e3100299c315d20d2ce38b8b1
 ARG BUILD_BASE=ubuntu:22.04
 ARG NODE_VERSION=24.21.0
 ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
@@ -192,6 +192,8 @@ RUN set -eux; \
     useradd --uid "${APP_UID}" --gid "${APP_UID}" --create-home --shell /bin/bash nimbalyst; \
     mkdir -p /var/lib/nimbalyst /workspace; \
     chown nimbalyst:nimbalyst /var/lib/nimbalyst /workspace; \
+    chgrp nimbalyst /etc/ssl/certs/ca-certificates.crt; \
+    chmod 0664 /etc/ssl/certs/ca-certificates.crt; \
     chmod 1777 /tmp; \
     chmod 0755 /opt/nimbalyst/bin/nimbalyst-node; \
     ln -sf /opt/nimbalyst/bin/nimbalyst-node /usr/local/bin/nimbalyst-node; \
@@ -226,5 +228,7 @@ USER 10001:10001
 # files apply to a real database -- as the unprivileged user.
 RUN nimbalyst-node --smoke
 
-# Keep the base /container-server/sandbox entrypoint, now running as uid 10001.
-# Root-only mount/HTTPS interception features are outside this management image.
+# Keep the base tini + /container-server/sandbox entrypoint, running as uid 10001.
+# The SDK appends the injected HTTPS CA during startup. Only the certificate
+# bundle grants the runtime group write access; its directory and owner remain
+# root. Root-only mounts are unsupported.

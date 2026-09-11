@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { loadConfig, type LoadedConfig } from '../config.js';
+import { loadConfig, requireSyncSettings, type LoadedConfig } from '../config.js';
 
 vi.mock('../db/openDatabase.js', () => ({ openDatabase: vi.fn() }));
 vi.mock('../host/nodeHost.js', () => ({ registerNodeHostEnvironment: vi.fn() }));
@@ -53,6 +53,54 @@ describe('headless execution policy', () => {
       }
       writeFileSync(file, JSON.stringify({ databasePath: './agent.sqlite', trust: { mode: 'bypass-all' } }));
       expect(loadConfig(file).trust).toEqual({ mode: 'bypass-all' });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('serve sync settings', () => {
+  const SYNC = {
+    serverUrl: 'https://sync.nimbalyst.com',
+    credentialPath: './node-credential.json',
+    encryptionKeySeed: 'c2VlZA==',
+    personalOrgId: 'organization-1',
+    personalUserId: 'member-1',
+    deviceId: 'sandbox-abc',
+    deviceName: 'Cloudflare sandbox',
+  };
+
+  function write(directory: string, config: Record<string, unknown>): LoadedConfig {
+    const file = join(directory, 'config.json');
+    writeFileSync(file, JSON.stringify({
+      databasePath: './agent.sqlite',
+      trust: { mode: 'bypass-all' },
+      ...config,
+    }));
+    return loadConfig(file);
+  }
+
+  it('resolves sync paths against the config file and names every missing key at once', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'nimbalyst-node-config-'));
+    try {
+      const loaded = write(directory, { sync: SYNC, workspacesPath: './workspaces.json' });
+      // Portable with its data: a config file and its credential travel together.
+      expect(loaded.resolvedCredentialPath).toBe(join(directory, 'node-credential.json'));
+      expect(loaded.resolvedWorkspacesPath).toBe(join(directory, 'workspaces.json'));
+      expect(requireSyncSettings(loaded)).toMatchObject({
+        deviceId: 'sandbox-abc',
+        credentialPath: join(directory, 'node-credential.json'),
+      });
+
+      // One error listing everything, not one restart per missing key.
+      const { deviceId: _deviceId, personalUserId: _personalUserId, ...partial } = SYNC;
+      expect(() => requireSyncSettings(write(directory, { sync: partial })))
+        .toThrow(/sync\.personalUserId, sync\.deviceId/);
+
+      // The one-turn CLI has no sync block at all and must still load.
+      const plain = write(directory, {});
+      expect(plain.resolvedCredentialPath).toBeUndefined();
+      expect(() => requireSyncSettings(plain)).toThrow(/must set a "sync" object/);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

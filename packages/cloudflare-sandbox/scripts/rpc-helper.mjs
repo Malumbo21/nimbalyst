@@ -9,6 +9,10 @@ class ControlError extends Error {
 /** Only fixed codes/reasons cross the child boundary; raw diagnostics stay private. */
 export function controlFailure(error) {
   if (error instanceof ControlError) return { success: false, error: error.code, reason: error.reason };
+  const reason = error?.message;
+  if (['invalid-path', 'invalid-request', 'node-not-provisioned', 'node-start-failed', 'grant-failed'].includes(reason)) {
+    return { success: false, error: reason.startsWith('node-') || reason === 'grant-failed' ? reason : 'unknown', reason };
+  }
   if (/not authenticated|not logged in|authentication error|invalid_grant|token.*expired/i.test(String(error?.message ?? ''))) {
     return { success: false, error: 'not-authenticated', reason: 'authentication' };
   }
@@ -41,10 +45,13 @@ function isPrivateControlConfig(config) {
 
 /** The desktop verifies Wrangler profile cwd and sanitizes the child environment. */
 export async function runManagerRPC(request, createProxy) {
-  if (!request || !['status', 'wake', 'stop'].includes(request.operation)) {
+  if (!request || !['status', 'wake', 'stop', 'provision', 'startNode', 'nodeStatus', 'stopNode'].includes(request.operation)) {
     throw new ControlError('unknown', 'invalid-operation');
   }
   if (request.operation === 'stop' && request.discardEphemeralData !== true) {
+    throw new ControlError('confirmation-required', 'confirmation-required');
+  }
+  if (request.operation === 'stopNode' && request.request?.discardEphemeralData !== true) {
     throw new ControlError('confirmation-required', 'confirmation-required');
   }
   if (typeof request.configPath !== 'string' || !isAbsolute(request.configPath)) {
@@ -59,7 +66,9 @@ export async function runManagerRPC(request, createProxy) {
     const manager = proxy.env.Manager;
     const result = request.operation === 'stop'
       ? await manager.stop({ discardEphemeralData: true })
-      : await manager[request.operation]();
+      : ['provision', 'startNode', 'stopNode'].includes(request.operation)
+        ? await manager[request.operation](request.request)
+        : await manager[request.operation]();
     // With remote bindings the result is a Miniflare stub, and dispose() below
     // poisons every stub. Copy the fields out while they can still be read;
     // returning the stub itself made every successful RPC look unreachable.
@@ -85,7 +94,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     let input = '';
     for await (const chunk of process.stdin) {
       input += chunk;
-      if (Buffer.byteLength(input, 'utf8') > 16_384) throw new ControlError('unknown', 'invalid-request');
     }
     let request;
     try { request = JSON.parse(input); }

@@ -84,7 +84,32 @@ function ErrorNote({ error }: { error: CloudflareSandboxError }): JSX.Element {
   );
 }
 
-export function CloudflareSandboxesPanel(): JSX.Element {
+export function CloudflareSandboxesPanel({ workspacePath }: { workspacePath?: string }): JSX.Element {
+  return <CloudflareSandboxesContent key={workspacePath ?? "global"} workspacePath={workspacePath} />;
+}
+
+function CloudflareSandboxesContent({ workspacePath }: { workspacePath?: string }): JSX.Element {
+  const selectionTouched = useRef(false);
+  const savedSelection = useRef<{profileName: string; accountId: string | null} | null>(null);
+  const saveSelection = useCallback((profileName: string, accountId: string | null) => {
+    selectionTouched.current = true;
+    if (!workspacePath) return;
+    void window.electronAPI.invoke("workspace:update-state", workspacePath, {cloudflareSandboxSelection: {profileName, accountId}})
+      .catch(() => setSelectionError("The Cloudflare selection could not be saved. Please select it again."));
+  }, [workspacePath]);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [selectionLoaded, setSelectionLoaded] = useState(!workspacePath);
+  useEffect(() => {
+    if (!workspacePath) return;
+    let cancelled = false;
+    void window.electronAPI.invoke("workspace:get-state", workspacePath).then(state => {
+      if (cancelled || selectionTouched.current) return;
+      const saved = state?.cloudflareSandboxSelection;
+      if (typeof saved?.profileName === "string") savedSelection.current = saved;
+    }).catch(() => { if (!cancelled) setSelectionError("The saved Cloudflare selection could not be loaded."); })
+      .finally(() => { if (!cancelled) setSelectionLoaded(true); });
+    return () => { cancelled = true; accountsRequest.current++; };
+  }, [workspacePath]);
   const [prerequisites, setPrerequisites] = useState<CloudflareSandboxPrerequisites | null>(null);
   const [prerequisitesError, setPrerequisitesError] = useState<CloudflareSandboxError | null>(null);
   const [prerequisitesLoading, setPrerequisitesLoading] = useState(true);
@@ -194,7 +219,8 @@ export function CloudflareSandboxesPanel(): JSX.Element {
   }, []);
 
   const handleSelectProfile = useCallback(
-    async (profileName: string) => {
+    async (profileName: string, restoredAccount?: string | null) => {
+      if (restoredAccount === undefined) saveSelection(profileName, null);
       setSelectedProfileName(profileName);
       setSelectedAccountId(null);
       setAccounts(null);
@@ -208,12 +234,22 @@ export function CloudflareSandboxesPanel(): JSX.Element {
         { profileName },
       );
       if (token !== accountsRequest.current) return;
-      if (response.success) setAccounts(response.data);
+      if (response.success) {
+        setAccounts(response.data);
+        if (restoredAccount && response.data.some(account => account.id === restoredAccount)) setSelectedAccountId(restoredAccount);
+      }
       else setAccountsError(response.error);
       setAccountsLoading(false);
     },
-    [invalidatePlan],
+    [invalidatePlan, saveSelection],
   );
+
+  useEffect(() => {
+    if (!selectionLoaded || !profiles || selectionTouched.current) return;
+    const saved = savedSelection.current;
+    savedSelection.current = null;
+    if (saved && profiles.some(profile => profile.name === saved.profileName)) void handleSelectProfile(saved.profileName, saved.accountId);
+  }, [selectionLoaded, profiles, handleSelectProfile]);
 
   const handleSignIn = useCallback(
     async (name: string, reauthenticate: boolean) => {
@@ -294,8 +330,8 @@ export function CloudflareSandboxesPanel(): JSX.Element {
         <p className="provider-panel-description text-[13px] leading-relaxed text-[var(--nim-text-muted)]">
           Deploy and manage a sandbox container in your own Cloudflare account. Nimbalyst signs in
           through Wrangler in your browser and uses your Wrangler profiles — it never asks for an
-          API token. This screen covers deployment and lifecycle only: running agents in the sandbox
-          is not wired up yet, and the container keeps nothing between stops.
+          API token. Connect an agent node to start remote sessions from a git branch.
+          The container keeps nothing between stops.
         </p>
       </div>
 
@@ -428,8 +464,9 @@ export function CloudflareSandboxesPanel(): JSX.Element {
       {/* 3. Account */}
       <section className={sectionClass} data-testid="cloudflare-account-section">
         <h4 className={headingClass}>Cloudflare account</h4>
+        {selectionError && <p role="alert" className={hintClass}>{selectionError}</p>}
         <p className={hintClass}>
-          Choose which account this sandbox is deployed to. Nothing is selected for you.
+          Choose which account this sandbox is deployed to. Your selection is remembered for this project.
         </p>
         {!selectedProfileName ? (
           <p className={`${hintClass} mt-3`} data-testid="cloudflare-account-blocked">
@@ -445,6 +482,7 @@ export function CloudflareSandboxesPanel(): JSX.Element {
             value={selectedAccountId ?? ''}
             onChange={(event) => {
               setSelectedAccountId(event.target.value || null);
+              if (selectedProfileName) saveSelection(selectedProfileName, event.target.value || null);
               invalidatePlan();
             }}
             data-testid="cloudflare-account-select"

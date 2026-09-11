@@ -15,7 +15,10 @@ import { registerNodeHostEnvironment } from './host/nodeHost.js';
 
 import { SessionManager } from '@nimbalyst/runtime/ai/server/SessionManager';
 import { ClaudeCodeProvider } from '@nimbalyst/runtime/ai/server/providers/ClaudeCodeProvider';
-import { AgentMessagesRepository } from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
+import {
+  AgentMessagesRepository,
+  type AgentMessagesStore,
+} from '@nimbalyst/runtime/storage/repositories/AgentMessagesRepository';
 import type { SessionStore } from '@nimbalyst/runtime/ai/adapters/sessionStore';
 import type { DocumentContext, StreamChunk } from '@nimbalyst/runtime/ai/server/types';
 
@@ -31,10 +34,33 @@ export interface RunTurnOptions {
   /** Absolute path to the workspace the agent runs in. Becomes the SDK's cwd. */
   workspacePath: string;
   prompt: string;
+  options?: import("@nimbalyst/runtime/sync/types").RemoteTurnOptions;
+  attachments?: import("@nimbalyst/runtime/ai/server/types").ChatAttachment[];
   /** Reuse an existing session instead of creating one. */
   sessionId?: string;
   /** Called for every chunk as it streams. */
   onChunk?: (chunk: StreamChunk) => void;
+  /**
+   * Called once the provider exists and before the stream is consumed, with a
+   * handle that can interrupt it. `serve` needs this to answer a `cancel`
+   * control message: there is no other way to reach the provider instance,
+   * which is created per turn and is otherwise entirely internal.
+   */
+  onTurnStarted?: (control: { cancel: () => Promise<void> }) => void;
+}
+
+/**
+ * Wrappers applied to the stores before anything can use them.
+ *
+ * `serve` decorates both with the sync layer. This is a constructor hook rather
+ * than a post-open setter because both repositories are module-level singletons
+ * in the runtime: by the time `open()` returns, `AgentMessagesRepository` has
+ * already been handed a store, and swapping it afterwards would leave any write
+ * that raced the swap unsynced with no error anywhere.
+ */
+export interface NodeStoreDecorators {
+  decorateSessionStore?: (store: SessionStore) => SessionStore;
+  decorateAgentMessagesStore?: (store: AgentMessagesStore) => AgentMessagesStore;
 }
 
 export interface RunTurnResult {
@@ -56,7 +82,10 @@ export class NimbalystNode {
     private readonly config: LoadedConfig,
   ) {}
 
-  static async open(config: LoadedConfig): Promise<NimbalystNode> {
+  static async open(
+    config: LoadedConfig,
+    decorators: NodeStoreDecorators = {},
+  ): Promise<NimbalystNode> {
     const trust = requireExecutionPolicy(config);
     const { db } = openDatabase(config.resolvedDatabasePath, config.schemaDir);
 
@@ -65,8 +94,13 @@ export class NimbalystNode {
     // provider's message writes go through `AgentMessagesRepository` with no
     // other path, and an unregistered store throws
     // "store adapter has not been provided" from deep inside a turn.
-    const sessionStore = createNodeSessionStore(db);
-    AgentMessagesRepository.setStore(createNodeAgentMessagesStore(db));
+    const baseSessionStore = createNodeSessionStore(db);
+    const sessionStore = decorators.decorateSessionStore?.(baseSessionStore) ?? baseSessionStore;
+
+    const baseMessagesStore = createNodeAgentMessagesStore(db);
+    AgentMessagesRepository.setStore(
+      decorators.decorateAgentMessagesStore?.(baseMessagesStore) ?? baseMessagesStore,
+    );
 
     // Passing the store to the constructor also calls `setSessionStore`, which
     // is what `AISessionsRepository` reads.
@@ -84,6 +118,24 @@ export class NimbalystNode {
 
   get sessionManager(): SessionManager {
     return this.sessions;
+  }
+
+  /**
+   * The session store, already decorated. `serve` writes host attribution
+   * through this so the write goes out over sync rather than only to disk.
+   */
+  get store(): SessionStore {
+    return this.sessionStore;
+  }
+
+  /**
+   * The open database handle. `serve` builds its prompt queue over the shared
+   * `queued_prompts` table rather than a second connection: better-sqlite3
+   * takes an exclusive lock, so a second opener is a corruption risk, not a
+   * convenience.
+   */
+  get database(): SqliteDatabase {
+    return this.db;
   }
 
   async runTurn(options: RunTurnOptions): Promise<RunTurnResult> {
@@ -167,10 +219,12 @@ export class NimbalystNode {
       // Code does not need one -- it authenticates through the CLI's own login
       // -- and nothing here reads `process.env`.
       apiKey: this.config.providerApiKeys?.['claude-code'],
+      model: (options.options?.model ?? session.model)?.replace(/^claude-code:/, ""),
+      effortLevel: options.options?.effortLevel,
     });
 
     const documentContext: DocumentContext = {
-      mode: 'agent',
+      mode: options.options?.mode ?? session.mode ?? 'agent',
       sessionType: session.sessionType ?? 'session',
       hasBeenNamed: session.hasBeenNamed ?? false,
       permissionsPath: options.workspacePath,
@@ -181,6 +235,17 @@ export class NimbalystNode {
     const text: string[] = [];
     const toolCalls: string[] = [];
     let error: string | undefined;
+
+    // Hand out the cancel handle before the first `await` on the stream. A
+    // cancel that arrives while the SDK is still starting up must still land,
+    // and `interruptCurrentTurn` is the graceful path -- it lets the provider
+    // wrap the turn up and drain, where `abort()` kills the subprocess and the
+    // partial transcript never reaches the session room.
+    options.onTurnStarted?.({
+      cancel: async () => {
+        await provider.interruptCurrentTurn();
+      },
+    });
 
     // Streaming chunks are written through a shared coalescing queue with up to
     // 200ms of latency, so a turn can finish with its transcript still in
@@ -194,6 +259,7 @@ export class NimbalystNode {
       resolvedSessionId,
       [],
       options.workspacePath,
+      options.attachments ?? [],
     )) {
       options.onChunk?.(chunk);
       if (chunk.type === 'text' && chunk.content) text.push(chunk.content);
