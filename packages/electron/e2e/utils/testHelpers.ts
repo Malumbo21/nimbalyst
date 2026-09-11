@@ -145,6 +145,12 @@ export const PLAYWRIGHT_TEST_SELECTORS = {
   sessionContainer: '[data-session-id]',
 
   // Editor
+  tabEditor: '.tab-editor',
+  autosaveConflictBanner: '[data-testid="autosave-conflict-banner"]',
+  autosaveConflictReload: '[data-testid="autosave-conflict-banner-reload"]',
+  editorMoreActions: 'button[title="More actions"]',
+  editorDropdownItem: 'button.dropdown-item',
+  monacoViewLines: '.monaco-editor .view-lines',
   contentEditable: '[contenteditable="true"]',
   trackerQuickCreateTypeSearch: '[data-testid="tracker-quick-create-type-search"]',
   trackerQuickCreateTitle: '[data-testid="tracker-quick-create-title"]',
