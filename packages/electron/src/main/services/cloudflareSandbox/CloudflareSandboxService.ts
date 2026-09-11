@@ -22,6 +22,7 @@
 
 import { randomUUID } from "crypto";
 import simpleGit from "simple-git";
+import { asPersonalMemberId, type PersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
 import type {
   CloudflareAccount,
@@ -128,7 +129,7 @@ export interface SandboxNodeEnvironment {
   /** HTTPS base of the sync server, matching whatever this build syncs to. */
   syncServerUrl(): string;
   /** Null when personal sync is not configured on this install. */
-  personalIdentity(): { personalOrgId: string; personalUserId: string } | null;
+  personalIdentity(): { personalOrgId: string; personalUserId: PersonalMemberId } | null;
   encryptionKeySeed(): string;
   readClaudeCredential(): Promise<string>;
   /** Run the device grant. Authorized with the personal JWT, never a team one. */
@@ -987,9 +988,11 @@ export function createDefaultNodeEnvironment(): SandboxNodeEnvironment {
     personalIdentity() {
       const config = getSessionSyncConfig();
       const personalOrgId = config?.personalOrgId || getPersonalOrgId();
-      const personalUserId = config?.personalUserId || getPersonalUserId();
+      const personalUserId = config?.personalUserId
+        ? asPersonalMemberId(config.personalUserId) // Restore the persisted personal-sync identity's brand.
+        : getPersonalUserId();
       if (!personalOrgId || !personalUserId) return null;
-      return { personalOrgId, personalUserId: String(personalUserId) };
+      return { personalOrgId, personalUserId };
     },
 
     encryptionKeySeed: () => getEncryptionKeySeed(),

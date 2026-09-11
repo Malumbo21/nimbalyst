@@ -8,6 +8,7 @@ import {
   INIT_CONFIG_FILE,
   checkInitConfigDisables,
   collectEventNames,
+  collectSourceEventNames,
   findClassificationErrors,
   parseList,
   readLists,
@@ -29,6 +30,18 @@ const lists = () => {
 
 test('every event name in source is classified', () => {
   assert.deepEqual(findClassificationErrors(collectEventNames(), readLists()), []);
+});
+
+test('object captures are detected without treating event parameter types as analytics', () => {
+  const src = `
+    const publish = (event: 'change' | 'add' | 'unlink') => {};
+    const message = { event: 'internal_message' };
+    posthog.capture({ distinctId: getId(), event: 'daily_active', properties: {} });
+    posthog?.capture({ event: 'session_started' });
+    window.electronAPI.invoke('analytics:track', { event: 'session_reparented' });
+    sendEvent('clicked_button');
+  `;
+  assert.deepEqual(collectSourceEventNames(src).sort(), ['clicked_button', 'daily_active', 'session_reparented', 'session_started']);
 });
 
 /** Source scan plus one synthetic name, so only that name can be the new error. */

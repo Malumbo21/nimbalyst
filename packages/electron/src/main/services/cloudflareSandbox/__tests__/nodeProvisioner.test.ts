@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { asPersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
 /**
  * Captures every log call rather than discarding it. R-3b inserted
@@ -46,7 +47,7 @@ const INPUT: Omit<NodeProvisionInput, "credential" | "claudeCredential"> = {
   identity: {
     serverUrl: "https://sync.nimbalyst.com",
     expectedPersonalOrgId: "org-7",
-    expectedPersonalUserId: "member-9",
+    expectedPersonalUserId: asPersonalMemberId("member-9"),
     encryptionKeySeed: "seed-abc",
   },
   workspace: {
@@ -59,7 +60,7 @@ const INPUT: Omit<NodeProvisionInput, "credential" | "claudeCredential"> = {
 
 const CREDENTIAL = {
   nodeId: "node-1",
-  userId: "member-9",
+  userId: asPersonalMemberId("member-9"),
   orgId: "org-7",
   refreshToken: "refresh-abc",
   refreshExpiresAt: 4_000_000,
@@ -151,7 +152,7 @@ describe("buildNodeProvisionPlan", () => {
         credentialPath: "./node-credential.json",
         encryptionKeySeed: "seed-abc",
         personalOrgId: "org-7",
-        personalUserId: "member-9",
+        personalUserId: asPersonalMemberId("member-9"),
         deviceId: "sandbox-dep-1",
         deviceName: "Cloudflare sandbox",
       },
@@ -329,7 +330,7 @@ describe("provisionAndStartNode", () => {
     const { client } = fakeControl();
     const revoked: string[] = [];
     const deps = defaultDeps(client, {
-      issueCredential: vi.fn(async () => ({ ...CREDENTIAL, userId: "member-other" })),
+      issueCredential: vi.fn(async () => ({ ...CREDENTIAL, userId: asPersonalMemberId("member-other") })),
       revokeCredential: vi.fn(async (id: string) => { revoked.push(id); }),
     });
 
@@ -377,7 +378,7 @@ describe("provisionAndStartNode", () => {
     // answers AUTH_MISMATCH if the config disagrees.
     const plan = buildNodeProvisionPlan({
       ...INPUT,
-      credential: { ...CREDENTIAL, userId: "member-9", orgId: "org-7" },
+      credential: { ...CREDENTIAL, userId: asPersonalMemberId("member-9"), orgId: "org-7" },
       claudeCredential: CLAUDE_CREDENTIAL,
     });
     const config = JSON.parse(plan.files[0].content);
@@ -389,7 +390,7 @@ describe("provisionAndStartNode", () => {
     const { client } = fakeControl();
     const logEvent = vi.fn();
     const deps = defaultDeps(client, {
-      issueCredential: vi.fn(async () => ({ ...CREDENTIAL, userId: "member-other" })),
+      issueCredential: vi.fn(async () => ({ ...CREDENTIAL, userId: asPersonalMemberId("member-other") })),
       logEvent,
     });
 

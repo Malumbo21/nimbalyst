@@ -25,6 +25,7 @@
  * device id, and a timestamp.
  */
 
+import type { PersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 import { SandboxOperationError } from "./errors";
 import type { NodeCredential } from "./deviceGrantClient";
 import type {
@@ -48,7 +49,7 @@ export interface NodeSyncIdentity {
   /** HTTPS form, e.g. `https://sync.nimbalyst.com`. */
   serverUrl: string;
   expectedPersonalOrgId: string;
-  expectedPersonalUserId: string;
+  expectedPersonalUserId: PersonalMemberId;
   /** The desktop's personal-sync encryption seed, handed over as-is. */
   encryptionKeySeed: string;
 }

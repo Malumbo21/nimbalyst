@@ -46,7 +46,9 @@ const SCANNED_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.swift', '.k
  * (`capture({ event: 'foo' })`), which is how session start is emitted.
  */
 const CALL_SITE = /(?:sendEvent|sendTeamAnalyticsEvent|trackTeamAnalyticsEvent|captureImmediate|capture|validateSessionLaunchEvent)\(\s*["']([a-z$][a-z0-9_$]*)["']/g;
-const EVENT_KEY = /\bevent:\s*["']([a-z$][a-z0-9_$]*)["']/g;
+// Only inspect analytics payloads: `event: 'change'` can also be a watcher type
+// annotation or an unrelated internal message, neither of which reaches PostHog.
+const EVENT_KEY = /\b(?:capture(?:Immediate)?\(\s*|invoke\(\s*["']analytics:track["']\s*,\s*)\{[^{}]*?\bevent:\s*["']([a-z$][a-z0-9_$]*)["']/g;
 
 export const TEAM_SCHEMA_FILE = 'packages/electron/src/shared/analytics/teamAnalytics.ts';
 export const ALLOW_LIST_FILE = 'packages/electron/src/shared/analytics/posthogIngestAllowList.ts';
@@ -133,6 +135,13 @@ export function parseList(src, name) {
   return new Set([...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]));
 }
 
+export function collectSourceEventNames(src) {
+  return [CALL_SITE, EVENT_KEY].flatMap((re) => {
+    re.lastIndex = 0;
+    return [...src.matchAll(re)].map((m) => m[1]);
+  });
+}
+
 /** Every analytics event name reachable from source, mapped to where it was first seen. */
 export function collectEventNames() {
   const found = schemaMapEvents();
@@ -140,10 +149,7 @@ export function collectEventNames() {
     for (const file of walk(join(repoRoot, root))) {
       const src = readFileSync(file, 'utf8');
       const where = relative(repoRoot, file);
-      for (const re of [CALL_SITE, EVENT_KEY]) {
-        re.lastIndex = 0;
-        for (const m of src.matchAll(re)) if (!found.has(m[1])) found.set(m[1], where);
-      }
+      for (const name of collectSourceEventNames(src)) if (!found.has(name)) found.set(name, where);
     }
   }
   return found;

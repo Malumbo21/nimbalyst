@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { asPersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
 import type {
   SandboxDeployment,
@@ -671,7 +672,7 @@ describe("review regressions", () => {
 
 const NODE_CREDENTIAL = {
   nodeId: "node-1",
-  userId: "member-9",
+  userId: asPersonalMemberId("member-9"),
   orgId: "org-7",
   refreshToken: "refresh-abc",
   refreshExpiresAt: 4_000_000,
@@ -704,7 +705,7 @@ const CONNECTED_NODE = {
 function nodeEnvironment(overrides: Record<string, unknown> = {}) {
   return {
     syncServerUrl: () => "https://sync.nimbalyst.com",
-    personalIdentity: () => ({ personalOrgId: "org-7", personalUserId: "member-9" }),
+    personalIdentity: () => ({ personalOrgId: "org-7", personalUserId: asPersonalMemberId("member-9") }),
     encryptionKeySeed: () => "seed-abc",
     readClaudeCredential: vi.fn(async () => '{"claudeAiOauth":{"accessToken":"a"}}'),
     issueNodeCredential: vi.fn(async () => NODE_CREDENTIAL),

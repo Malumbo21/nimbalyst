@@ -26,14 +26,14 @@
  *    socket choose what lands on the user's disk.
  */
 
-import type { PersonalJwt } from "@nimbalyst/runtime/auth/jwtScopes";
+import { asPersonalMemberId, type PersonalJwt, type PersonalMemberId } from "@nimbalyst/runtime/auth/jwtScopes";
 
 import { SandboxOperationError } from "./errors";
 
 /** What the node needs on disk to join sync as itself. */
 export interface NodeCredential {
   nodeId: string;
-  userId: string;
+  userId: PersonalMemberId;
   orgId: string;
   refreshToken: string;
   /** Epoch milliseconds, from the server. */
@@ -226,7 +226,8 @@ export class DeviceGrantClient {
     return {
       credential: {
         nodeId,
-        userId,
+        // The device grant was approved with the personal-org JWT above.
+        userId: asPersonalMemberId(userId),
         orgId,
         refreshToken,
         refreshExpiresAt,
